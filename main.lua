@@ -115,10 +115,48 @@ function Hotspot:ensureModuleLoaded()
     return self:waitForInterface()
 end
 
+local function isRunningProcess(name)
+    return os.execute("pidof " .. name .. " >/dev/null 2>&1") == 0
+end
+
+-- MediaTek: when Nickel first turns wifi on after boot, it also starts the
+-- wmt_loader and wmt_launcher firmware daemons. KOReader's enable-wifi.sh does not,
+-- and powering the chip without them reboots the Kobo
+-- (koreader/koreader#13197, fix from koreader/koreader#16222).
+-- Starts them like Nickel does. Returns false if that is not possible.
+function Hotspot:startMediatekDaemons()
+    if isRunningProcess("wmt_launcher") then
+        return true
+    end
+    if not (util.pathExists("/usr/bin/wmt_loader") and util.pathExists("/usr/bin/wmt_launcher")) then
+        logger.warn("Hotspot: wmt_loader/wmt_launcher not found")
+        return false
+    end
+    logger.info("Hotspot: starting wmt_loader and wmt_launcher")
+    if not isModuleLoaded("wmt_drv") then
+        os.execute(string.format("insmod /drivers/%s/mt66xx/wmt_drv.ko", os.getenv("PLATFORM") or ""))
+    end
+    if not isRunningProcess("wmt_loader") then
+        os.execute("/usr/bin/wmt_loader >/dev/null 2>&1 &")
+    end
+    os.execute("/usr/bin/wmt_launcher -p /lib/firmware >/dev/null 2>&1 &")
+    -- Give the daemons time to settle before the chip is powered on.
+    for _ = 1, 12 do
+        ffiutil.sleep(0.25)
+        if isRunningProcess("wmt_launcher") then
+            ffiutil.sleep(1)
+            return true
+        end
+    end
+    logger.warn("Hotspot: wmt_launcher did not start")
+    return false
+end
+
 -- MediaTek: the wifi modules are loaded once and never unloaded. If nothing
--- has loaded them since boot, cycle KOReader's own wifi scripts once.
+-- has loaded them since boot, start the firmware daemons, then cycle
+-- KOReader's own wifi scripts once.
 function Hotspot:ensureMediatekModulesLoaded()
-    if isModuleLoaded(WIFI_MODULE) then
+    if isModuleLoaded(WIFI_MODULE) and isRunningProcess("wmt_launcher") then
         return true
     end
     local msg = InfoMessage:new{
@@ -126,20 +164,31 @@ function Hotspot:ensureMediatekModulesLoaded()
     }
     UIManager:show(msg)
     UIManager:forceRePaint()
-    logger.info("Hotspot: wifi modules not loaded, cycling enable-wifi.sh and disable-wifi.sh")
-    os.execute("./enable-wifi.sh")
-    os.execute("./disable-wifi.sh")
+    local ok = self:startMediatekDaemons()
+    if ok then
+        logger.info("Hotspot: wifi modules not loaded, cycling enable-wifi.sh and disable-wifi.sh")
+        os.execute("./enable-wifi.sh")
+        os.execute("./disable-wifi.sh")
+        ok = isModuleLoaded(WIFI_MODULE)
+    end
     UIManager:close(msg)
-    return isModuleLoaded(WIFI_MODULE)
+    if not ok then
+        UIManager:show(InfoMessage:new{
+            icon = "notice-warning",
+            text = _("Hotspot: Wi-Fi has not been started since the Kobo restarted.\n\nTurn on Wi-Fi once from the Kobo home screen, then try again."),
+        })
+    end
+    return ok
 end
 
 -- Makes the AP interface available.
+-- Returns ok, and whether a failure was already reported to the user.
 function Hotspot:bringUpInterface()
     if not BACKEND.wmt then
         return self:ensureModuleLoaded()
     end
     if not self:ensureMediatekModulesLoaded() then
-        return false
+        return false, true
     end
     if util.pathExists("/sys/class/net/" .. BACKEND.iface) then
         return true
@@ -251,7 +300,8 @@ function Hotspot:stopDHCP()
     os.remove(UDHCPD_CONF)
 end
 
-function Hotspot:start()
+-- `done` (optional) runs once the hotspot has started or failed to, e.g. to refresh the menu.
+function Hotspot:start(done)
     if self:isRunning() then return end
 
     if not BACKEND then
@@ -269,7 +319,10 @@ function Hotspot:start()
             ok_text = _("Turn off Wi-Fi and start hotspot"),
             ok_callback = function()
                 NetworkMgr:toggleWifiOff(function()
-                    UIManager:nextTick(function() self:startHotspot() end)
+                    UIManager:nextTick(function()
+                        self:startHotspot()
+                        if done then done() end
+                    end)
                 end, true)
             end,
         })
@@ -277,10 +330,13 @@ function Hotspot:start()
     end
 
     self:startHotspot()
+    if done then done() end
 end
 
 function Hotspot:startHotspot()
-    if not self:bringUpInterface() then
+    local ok, reported = self:bringUpInterface()
+    if not ok then
+        if reported then return end
         UIManager:show(InfoMessage:new{
             icon = "notice-warning",
             text = T(_("Hotspot: %1 interface not found."), BACKEND.iface),
@@ -321,7 +377,8 @@ function Hotspot:startHotspot()
     end
 end
 
-function Hotspot:stop()
+-- `done` (optional) runs once the hotspot has stopped, e.g. to refresh the menu.
+function Hotspot:stop(done)
     if not self:isRunning() then return end
 
     logger.info("Hotspot: stopping")
@@ -332,6 +389,7 @@ function Hotspot:stop()
     if not BACKEND.wmt then
         os.execute("ip link set " .. BACKEND.iface .. " down")
         os.remove(SENTINEL)
+        if done then done() end
         UIManager:show(InfoMessage:new{
             text = _("Hotspot stopped."),
             timeout = 2,
@@ -342,6 +400,7 @@ function Hotspot:stop()
     -- MediaTek: leaving AP mode powers wifi off.
     writeWmt("0")
     os.remove(SENTINEL)
+    if done then done() end
     UIManager:show(ConfirmBox:new{
         text = _("Hotspot stopped. Wi-Fi is off."),
         ok_text = _("Turn on Wi-Fi"),
@@ -352,11 +411,11 @@ function Hotspot:stop()
     })
 end
 
-function Hotspot:onToggleHotspot()
+function Hotspot:onToggleHotspot(done)
     if self:isRunning() then
-        self:stop()
+        self:stop(done)
     else
-        self:start()
+        self:start(done)
     end
 end
 
@@ -458,9 +517,11 @@ function Hotspot:addToMainMenu(menu_items)
                 checked_func = function() return self:isRunning() end,
                 check_callback_updates_menu = true,
                 callback = function(touchmenu_instance)
-                    self:onToggleHotspot()
-                    ffiutil.sleep(1)
-                    touchmenu_instance:updateItems()
+                    -- On MediaTek, starting can wait for a confirmation dialog,
+                    -- so refresh the menu when the toggle completes.
+                    self:onToggleHotspot(function()
+                        touchmenu_instance:updateItems()
+                    end)
                 end,
             },
             {

@@ -39,7 +39,7 @@ MediaTek's driver has no always-present AP interface. Writing `A` to `/dev/wmtWi
 The chip cannot be a Wi-Fi client and an access point at the same time. So on these devices:
 
 - **Starting with Wi-Fi on:** if KOReader's Wi-Fi is on, the plugin asks first (**Cancel** / **Turn off Wi-Fi and start hotspot**).
-- **Wi-Fi modules not loaded:** if nothing has loaded the Wi-Fi kernel modules since boot, the plugin loads them first by turning Wi-Fi on and off once ("Loading Wi-Fi modules...").
+- **Wi-Fi not used since boot:** the plugin first starts MediaTek's firmware daemons (`wmt_loader`, `wmt_launcher`), as Nickel does. Then it loads the Wi-Fi kernel modules by turning Wi-Fi on and off once ("Loading Wi-Fi modules..."). Without the daemons, powering the chip reboots the Kobo (the same bug as [koreader#13197](https://github.com/koreader/koreader/issues/13197); fix from [koreader#16222](https://github.com/koreader/koreader/issues/16222)). If the daemons cannot be started, the plugin asks you to turn Wi-Fi on once from the Kobo home screen instead.
 - **Stopping:** stopping the hotspot powers Wi-Fi off. The plugin then asks whether to turn Wi-Fi back on or keep it off.
 
 hostapd logs `Failed to set TX queue parameters` and `Could not set station <name> flags for kernel driver` on this driver. Both are harmless: clients connect and the WPA2 handshake completes.
@@ -71,7 +71,7 @@ The bundled `hostapd` binary is a statically linked ARMv7 hard-float executable 
 
 ### 3. Obtain udhcpd for your architecture
 
-The bundled `udhcpd` binary is a copy of the device's own BusyBox binary, renamed so that BusyBox's multi-call dispatch runs it as the `udhcpd` applet. We did not cross-compile this - Kobo already ships BusyBox with the `udhcpd` applet included.
+The bundled `udhcpd` binary is a copy of the device's own BusyBox binary, renamed so that BusyBox's multi-call dispatch runs it as the `udhcpd` applet. We did not cross-compile this: Kobo already ships BusyBox with the `udhcpd` applet included.
 
 **To check on your target device:**
 
