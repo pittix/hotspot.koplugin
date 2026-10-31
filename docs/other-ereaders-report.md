@@ -12,7 +12,8 @@
 | **PocketBook B288 devices (Touch Lux 4/5, InkPad 3, Touch HD 3, Color, InkPad X, …)** | **Likely if rooted** | mac80211 XRadio driver + cfg80211 in kernel 3.10.65 (verified), AP and probably STA+AP concurrency. Blocker: root (KOReader is unprivileged, but already uses `/mnt/secure/su` when present) |
 | reMarkable 1 / 2 | Likely (not an e-reader per se, but a KOReader target) | brcmfmac (AP via nl80211), root by default, KOReader already takes Wi-Fi over from xochitl |
 | Kindle Basic 8th gen, PW4, Basic 10th, Oasis 2/3 (Broadcom BCM4343W) | Likely (Basic 8th) / probably likely (others) | Basic 8th verified on bcmdhd cfg80211 build. Same-module AP recipe: `op_mode=2` + stock hostapd nl80211. Stock firmware probably includes SoftAP (§6.2) |
-| Kindle PW2/PW3/Voyage/Basic 7th (Atheros AR6003) | Possible with work, path known | Stock wext `ar6003` can't do it, but upstream `ath6kl` can (b/g, ≤ 10 clients). Amazon's own GPL tree ships QCA's ath6kl compat-wireless. Rebuild those modules + musl hostapd (§6.1) |
+| **Kindle Voyage (Atheros AR6003, FW 5.13.6)** | **Works (third party)** | unrealJune's [kindshare](https://github.com/unrealJune/kindshare) already runs hostapd + busybox udhcpd as a SoftAP on a Voyage with the stock `ath6kl_sdio` driver. Port = Kindle glue + a hostapd built for kernel 3.0.35 (§6.1, added after review) |
+| Kindle PW2/PW3/Basic 7th (Atheros AR6003) | Possible with work, path known | If `lsmod` shows `ath6kl_sdio`, same as the Voyage. If it shows wext `ar6003`/`ar6000`, swap in ath6kl (b/g, ≤ 10 clients) from Amazon's own GPL tree (QCA compat-wireless) + musl hostapd (§6.1) |
 | PocketBook B300 (newest) | Unknown | Wi-Fi driver unverified, root much harder |
 | Cervantes, Bookeen | Possible with work | Realtek vendor drivers → `rtl871xdrv` hostapd, old kernels |
 | Older Kindles (K4/Touch/PW1), PocketBook A13 / i.MX6, Sony PRS-T | Unlikely | Very old kernels, vendor wext drivers |
@@ -92,7 +93,7 @@ KOReader itself sets `isMTK = yes` [H, verified] on: PW5, PW5 SE, PW6, Basic 4 (
 | Model | KOReader platform | SoC / CPU | Kernel | Wi-Fi chip / driver | AP path | Conf. |
 |---|---|---|---|---|---|---|
 | K4 NT, Touch, PW1 | yoshi / yoshime | i.MX50, Cortex-A8 (NEON) | 2.6.31-rt11 | Atheros AR6003 (inferred), vendor `ar6003` | vendor wext ioctls only | M/L |
-| PW2, Basic 7th gen, Voyage, PW3 | wario | i.MX6 SoloLite, Cortex-A9 | 3.0.35 | Atheros AR6003G/AR6803G, vendor `ar6003` (lsmod on PW2); built **without** `AR6003_CFG80211`. The defconfig also has `CONFIG_ATH6KL=m` | wext only on stock; rebuilt `ath6kl` could give nl80211 | H |
+| PW2, Basic 7th gen, Voyage, PW3 | wario | i.MX6 SoloLite, Cortex-A9 | 3.0.35 | Atheros AR6003G/AR6803G, vendor `ar6003` (lsmod on PW2), but **Voyage FW 5.13.6 runs `ath6kl_sdio`** (kindshare); built **without** `AR6003_CFG80211`. The defconfig also has `CONFIG_ATH6KL=m` | wext only on stock; rebuilt `ath6kl` could give nl80211 | H |
 | Oasis 1 | duet | i.MX6SL | 3.0.35 | Broadcom, driver unknown; `CFG80211=y` | probably nl80211 | M |
 | Basic 8th gen | heisenberg | i.MX6 family | 3.10.53 | Broadcom BCM4343, driver unknown | probably nl80211 | M/L |
 | Oasis 2, Oasis 3 | zelda | i.MX7D, Cortex-A7 | 4.1.15 | Broadcom BCM4343 | probably nl80211 | M |
@@ -149,8 +150,8 @@ Kernel and chip sources for the table: [linux-3.0.35-lab126 mirror](https://gith
   - `lipc-set-prop com.lab126.powerd preventScreenSaver 1` (what KOReader's KeepAlive plugin does) stops timeout sleep. A power-button press still suspends.
   - The plugin should set it while the AP is up, and tear the AP down cleanly on suspend.
 - **No hidden AP/tethering feature** in Kindle firmware [M]. In Amazon's Wi-Fi Simple Setup the Kindle is the *client*.
-- **Prior art**: no report found of hostapd or a soft AP running on any Kindle [M].
-  - The closest is a 2011 K3 thread about `/etc/init.d/wifi --mode=ap`, never shown working.
+- **Prior art** (corrected 2026-10-31 during the forum-post credits check): unrealJune's **kindshare** ([MobileRead thread](https://www.mobileread.com/forums/showthread.php?p=4604552), [repo](https://github.com/unrealJune/kindshare), MIT) runs a hostapd + busybox udhcpd SoftAP on a **Kindle Voyage, FW 5.13.6**, with the stock `ath6kl_sdio` driver [H, source text]. Recipe: `stop wifid`, `killall wpa_supplicant`, hostapd on `wlan0` (11g, no HT, no WMM, WPA2 mandatory because open networks never authorize clients), static IP, udhcpd, iptables ACCEPT rules, `start wifid` on stop. See KIN-C27/KIN-C28.
+  - The earlier "no prior art" result was wrong. Its 2011 K3 source doesn't even mention AP mode.
   - USBNetwork (RNDIS/ECM on `usb0`) is the established alternative for wired transfers.
 
 ### 1.6 Feasibility per Kindle family
@@ -160,7 +161,8 @@ Kernel and chip sources for the table: [linux-3.0.35-lab126 mirror](https://gith
 | **MTK: PW5/SE, Basic 2022/2024, PW6, Scribe 1/2, Colorsoft** | **Likely** | Same gen4m/WMT stack as Libra Colour, kernel 4.9, current hostapd binary should run unchanged |
 | Broadcom: PW4, Basic 10th, Oasis 2/3, Basic 8th | **Possible with work** | BCM4343 can do AP; driver (bcmdhd vs brcmfmac) and AP-capable firmware unverified; kernels OK for current binary |
 | Broadcom: Oasis 1 | Possible with more work | as above, plus kernel 3.0.35 needs a rebuilt hostapd |
-| Atheros: PW2, Basic 7th, Voyage, PW3 | **Possible with significant work** | Stock `ar6003` is wext-only. Either use vendor ioctls (no hostapd, WPA uncertain), or build `cfg80211`+`ath6kl_sdio` modules from Amazon's GPL 3.0.35 tree and use a musl hostapd (nl80211) |
+| Atheros: Voyage (FW 5.13.6) | **Works (third party)** | stock `ath6kl_sdio` + hostapd + udhcpd proven by kindshare; see 1.5 |
+| Atheros: PW2, Basic 7th, PW3 | **Possible with significant work** (see §6.3: path known; first check for `ath6kl_sdio`) | Stock `ar6003` is wext-only. Either use vendor ioctls (no hostapd, WPA uncertain), or build `cfg80211`+`ath6kl_sdio` modules from Amazon's GPL 3.0.35 tree and use a musl hostapd (nl80211) |
 | K4 / Touch / PW1 | Unlikely | kernel 2.6.31, vendor driver, very old cfg80211 |
 | Scribe 3 / Scribe Colorsoft (2025) | Unknown | hardware not yet documented |
 | K2 / DX / K3 | Out of scope | ARMv6, ancient kernels |
@@ -437,6 +439,8 @@ Also bundle a static **`iw`** (libnl): on every new platform it's the fastest wa
 
 **Already solved elsewhere?** Mostly yes, with the upstream/QCA `ath6kl` driver and hostapd nl80211. The vendor `ar6003`/`ar6000` driver path is **not**: it needs an unpublished vendor hostapd backend.
 
+- **Solved on a Kindle too** (found after this section was written): kindshare's SoftAP on a **Voyage, FW 5.13.6** with Amazon's stock `ath6kl_sdio` (compat-wireless v3.4.0.158), hostapd 2.11 + busybox udhcpd [H, source text]. So at least one Atheros Kindle already ships the ath6kl driver described below, and needs no module build. See §1.5 and KIN-C27/KIN-C28.
+
 - **The Kindle chip is the revision ath6kl supports** [H]:
   - The Kindle Touch vendor driver loads firmware from `/opt/ar6k/target/AR6003/hw2.1.1/`.
     ([MobileRead](https://www.mobileread.com/forums/showthread.php?p=4221618))
@@ -482,6 +486,7 @@ Also bundle a static **`iw`** (libnl): on every new platform it's the fastest wa
   ([wmiconfig.c](https://raw.githubusercontent.com/psyke83/AR6kSDK.3.0/master/AR6kSDK.3.0/host/tools/wmiconfig/wmiconfig.c))
 
 **Recommended path for Atheros Kindles:**
+0. `lsmod | grep -iE 'ath6kl|ar6000|ar6003'`. If `ath6kl_sdio` is already loaded (Voyage FW 5.13.6), skip to step 3 without the module swap, following kindshare's recipe.
 1. First check whether the stock rootfs already ships the ath6kl modules (`find /lib/modules/$(uname -r) -name '*ath6kl*'`). If not, build the 3.0.35-lab126 tree with `imx60_wario_defconfig` (vermagic must match) and collect `compat.ko`, `cfg80211.ko`, `ath6kl_core.ko`/`ath6kl_sdio.ko`. Fallback: backports-4.4.2.
 2. Bundle the linux-firmware hw2.1.1 files. Pass the Kindle's own calibration file via `board_data_file=` (or use `bdata.SD32.bin`).
 3. At runtime:
@@ -564,6 +569,7 @@ Also bundle a static **`iw`** (libnl): on every new platform it's the fastest wa
 | **Basic 8th gen** | Possible with work | **Likely**: verified bcmdhd 1.201.59 cfg80211 build. Same-module recipe is `op_mode=2` + stock hostapd nl80211 + udhcpd. The current binary runs on kernel 3.10 |
 | Broadcom Kindles (PW4/Basic 10th/Oasis 2/3) | Possible with work | **Likely-ish**: probably the same bcmdhd. The remaining risk is whether the stock firmware includes SoftAP (probably yes, since it's newer than 1.141.100.6) |
 | Oasis 1 | Possible with more work | Unchanged: driver unconfirmed, needs musl hostapd |
+| **Voyage** (added later) | Possible with work, path known | **Works (third party)**: kindshare SoftAP on stock `ath6kl_sdio`, FW 5.13.6 |
 
 ### 6.4 Extra on-device checks (Atheros/Broadcom Kindles)
 

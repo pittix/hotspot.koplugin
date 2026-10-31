@@ -63,6 +63,11 @@ Future agents should use it to **re-verify** claims, mark them stale, and **exte
   - Correction applied: the Kindle subagent wrote "static glibc 2.10". **2.10 is the hostapd version.** The binary links glibc 2.36-era (Debian bookworm toolchain), so it needs kernel ≥ 3.2.
 - **2026-10-31, round 2**: one subagent researched Atheros AR6003 / Broadcom BCM4343W AP prior art outside e-readers (OpenWrt, Raspberry Pi, Android, i.MX boards). The user clarified D3 mid-run.
   - Correction applied: the subagent said the PW3 mainline-ath6kl thread showed "working Wi-Fi". Verified text: Wi-Fi associated and got an IP but "didn't seem to work well". The board-data fix was expected to work but was never reported as tested.
+- **2026-10-31, round 3 (credits check for a MobileRead call for testers)**: the main agent fetched every forum source to record its author (sources.md, "Attribution").
+  - **New prior art found**: unrealJune's kindshare already runs a hostapd SoftAP on a Kindle Voyage with stock `ath6kl_sdio` (KIN-C27, KIN-C28). KIN-C16 ("no prior art on Kindle") is now `contradicted`. Lesson: search MobileRead's KOReader forum for recent plugin threads, not only for hardware/driver threads.
+  - Citation mismatches found: S-KIN-16, S-KIN-18, S-KIN-39 and S-PB-07 don't contain what they were cited for; S-KIN-12 and S-OTH-04 support the claim at thread level only. Subagents had cited `showthread.php?p=<id>` pages whose content sits in a different post. **Pin the exact post** (`showpost.php?p=<id>`) when adding forum sources.
+  - The filesync-eink session confirmed the companion tool facts (S-FS-01).
+- **2026-10-31, implementation**: at the user's request, kindshare's Voyage recipe was ported into the plugin as an experimental Kindle backend (KIN-C28 "implemented"). It has been checked in a mock harness only.
 - Nothing in this folder has been tested on a device yet.
 
 ## Status and next steps (as of 2026-10-31)
@@ -73,7 +78,7 @@ Future agents should use it to **re-verify** claims, mark them stale, and **exte
   2. PocketBook B288 (rooted)
   3. reMarkable 1/2
   4. Broadcom Kindles (Basic 8th gen first: driver verified)
-  5. Atheros Kindles (needs ath6kl module build + musl hostapd)
+  5. Atheros Kindles (needs ath6kl module build + musl hostapd), **except the Voyage**: already proven by kindshare on stock `ath6kl_sdio`, so it only needs Kindle glue + a kernel-3.0-compatible hostapd and could move up the list
 - Re-verification priority for future agents:
   - fast-moving facts: Kindle jailbreak coverage, KOReader device lists
   - anything with status `agent` or `snippet` that a verdict depends on: KIN-C09, KIN-C10, KIN-C13, PB-C02, PB-C05, BRCM-C06

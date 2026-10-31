@@ -80,6 +80,7 @@ caveat: research subagent was cut off by an API safeguard mid-report; claims wit
 - status: snippet
 - sources: S-PB-07
 - recheck: kernel-b300 Makefile `VERSION/PATCHLEVEL/SUBLEVEL`
+- notes: 2026-10-31: the cited post p=4583437 does not contain this claim (see sources.md). Treat as unsourced until the Makefile is checked
 
 ### PB-C10: AIC8800 on B300
 - claim: the subagent suggested B300 devices use an AIC8800 chip. This was **not confirmed**: no `aic*` dir appears in the kernel-b300 wireless listing (which may be incomplete).

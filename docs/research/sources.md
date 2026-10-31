@@ -17,6 +17,8 @@ All accessed 2026-10-31 unless noted.
 | S-LOC-02 | `udhcpd` (plugin root) | binary | BASE-C02 | verified | reproduce: `file udhcpd; readelf -A udhcpd; strings udhcpd \| grep 'BusyBox v'` |
 | S-LOC-03 | `main.lua` (plugin root) | source | BASE-C03 | verified | BACKENDS table, `Device:isKobo()` guard, `WIFI_MODULE`, enable/disable-wifi.sh |
 | S-LOC-04 | `README.md` (plugin root) | doc | BASE-C03 | verified | MediaTek notes, koreader#13197/#16222 references |
+| S-LOC-05 | https://github.com/thorondir/hotspot.koplugin | upstream repo | BASE-C03 | verified | original plugin (commits by Ying Stokes, GitHub `thorondir`), Clara 2E only; `pittix/hotspot.koplugin` is a fork. No licence file shown |
+| S-FS-01 | https://github.com/abrahamnm/filesync.koplugin ; fork https://github.com/pittix/filesync.koplugin (branches `feat/eink-mode`, `fix/aborted-download-hang`) | companion repo | D3 | agent (from the filesync-eink session, 2026-10-31) | filesync.koplugin by abrahamnm, AGPLv3: HTTP file manager on the reader, port 80 (fallback 8080), `filesync.local` via mDNS. E-ink browser mode is on the fork, upstream PR not opened yet. Hotspot+filesync not yet tested end to end |
 
 ## KOReader (code and issues)
 
@@ -61,9 +63,9 @@ All accessed 2026-10-31 unless noted.
 | S-KIN-13 | https://www.mobileread.com/forums/showthread.php?p=4133943 | forum (serial log) | KIN-C23 | agent | second KT3 log, same driver |
 | S-KIN-14 | https://www.mobileread.com/forums/showthread.php?p=4103442 | forum | KIN-C24, ATH-C02 | verified | PW3 mainline: AR6803G ≈ AR6003 QFN, ath6kl, `bdata.SD32.bin`; partial results, station only |
 | S-KIN-15 | https://www.mobileread.com/forums/showthread.php?p=4221618 | forum | KIN-C25, ATH-C02 | agent | Kindle Touch `/opt/ar6k/target/AR6003/hw2.1.1/bin/`, `/usr/libexec/firmware.sh` |
-| S-KIN-16 | https://www.mobileread.com/forums/showthread.php?p=4110907 | forum | KIN-C06 | agent | AR6003 SD32 board-data variant |
+| S-KIN-16 | https://www.mobileread.com/forums/showthread.php?p=4110907 | forum | KIN-C06 | verified (mismatch) | post p=4110907 is NiMa's serial-wiring reply; the SD32 board-data info on that page is bdm310's post p=4103442, i.e. **duplicate of S-KIN-14**. Cite S-KIN-14 instead |
 | S-KIN-17 | https://barebox.org/doc/2019.06.0/_sources/boards/imx/amazon-kindle-4-5.rst.txt | doc | KIN-C06 | agent | K4/K5 i.MX50 |
-| S-KIN-18 | https://www.mobileread.com/forums/showthread.php?page=2&t=246657 | forum | KIN-C06 | agent | 2.6.31-rt11-lab126 |
+| S-KIN-18 | https://www.mobileread.com/forums/showthread.php?page=2&t=246657 | forum | KIN-C06 | verified (mismatch) | thread "PaperWhite 1 Kernel Build Walkthrough"; page 2 does **not** contain `2.6.31-rt11-lab126` (only `linux-2.6.31.tar.gz` by bulsa). Kernel string for K4/Touch/PW1 still needs another source |
 | S-KIN-19 | https://techinfodepot.shoutwiki.com/wiki/Amazon_Kindle_7_Gen_(WP63GW) | hw database | KIN-C06 | agent | AR6003G |
 | S-KIN-20 | https://techinfodepot.shoutwiki.com/wiki/Amazon_Kindle_Paperwhite_2_Wi-Fi_6_Gen_(DP75SDI) | hw database | KIN-C06 | agent | PW2 chip |
 | S-KIN-21 | https://www.ifixit.com/Teardown/Kindle+Voyage+Teardown/32278 | teardown | KIN-C06 | agent | Voyage chip |
@@ -84,7 +86,9 @@ All accessed 2026-10-31 unless noted.
 | S-KIN-36 | https://homecircuits.eu/blog/repurposing-kindle-paperwhite-dashboard/ | blog | KIN-C09 | agent | `wpa_cli` present |
 | S-KIN-37 | https://www.mobileread.com/forums/showthread.php?p=2413909 | forum | KIN-C10 | agent | stock iptables INPUT DROP (FW 5.3.3 era) |
 | S-KIN-38 | https://developer.amazon.com/docs/frustration-free-setup/understand-wi-fi-simple-setup.html | vendor doc | KIN-C15 | agent | Kindle is provisionee |
-| S-KIN-39 | https://www.mobileread.com/forums/showthread.php?p=1361281 ; https://www.mobileread.com/forums/showthread.php?p=1399814 | forum | KIN-C16 | agent | K3 ad-hoc / `/etc/init.d/wifi --mode=ap` (unconfirmed) |
+| S-KIN-39 | https://www.mobileread.com/forums/showthread.php?p=1361281 ; https://www.mobileread.com/forums/showthread.php?p=1399814 | forum | KIN-C16 | verified (mismatch) | thread "Kindle 3 wifi mode monitor \| sniffing"; the two cited posts (kranu 2011-01-27, m0ngr31 2011-02-16) do **not** mention AP/ad-hoc or `--mode=ap`. Does not support KIN-C16 |
+| S-KIN-40 | https://www.mobileread.com/forums/showthread.php?p=4604552 | forum | KIN-C27, KIN-C28 | verified | "Quick Share/Nearby Share Plugin for KoReader", unrealJune, 2026-08-17: SoftAP on Kindle Voyage FW 5.13.6 with "cross-compiled hostapd plus busybox udhcpd", stock `ath6kl_sdio`; check with `iw phy phy0 info` for `* AP` |
+| S-KIN-41 | https://github.com/unrealJune/kindshare ; .../blob/main/docs/COMPATIBILITY.md ; .../blob/main/docs/PORTING.md ; https://raw.githubusercontent.com/unrealJune/kindshare/main/device/kindle-ap.sh | repo (MIT) | KIN-C27, KIN-C28 | verified | kindshare by unrealJune. Voyage (Icewine, i.MX6SL), 3.0.35-lab126, AR6003 hw2.1.1, "upstream `ath6kl_sdio` (compat-wireless backport), v3.4.0.158". hostapd 2.11 static armv7 (Docker/QEMU). `kindle-ap.sh`: `stop wifid`, `killall wpa_supplicant`, `modprobe ath6kl_sdio`, hostapd on `wlan0`, `192.168.55.1/24`, udhcpd, iptables INPUT/OUTPUT rules, 600 s no-client revert, `start wifid` on stop |
 
 ## PocketBook
 
@@ -96,7 +100,7 @@ All accessed 2026-10-31 unless noted.
 | S-PB-04 | https://github.com/pocketbook?tab=repositories | org listing | PB-C08 | verified | kernel-b300 / uboot-b300 updated Mar 2026; Platform_A13, Platform_MX6, SDK_6.3.0 |
 | S-PB-05 | https://github.com/pocketbook/Platform_A13 | GPL kernel | PB-C11 | agent | 3.0.8, RTL8188EUS build flags |
 | S-PB-06 | https://github.com/pocketbook/Platform_MX6 | GPL kernel | PB-C12 | agent | 3.0.35, CFG80211 not set (PB631) |
-| S-PB-07 | https://www.mobileread.com/forums/showthread.php?p=4583437 (and p=4522396, p=4429705 from the same search) | forum | PB-C09 | snippet | claim "SDK 6.8 for B300 uses kernel 4.9.56"; exact post not pinned |
+| S-PB-07 | https://www.mobileread.com/forums/showthread.php?p=4583437 (and p=4522396, p=4429705 from the same search) | forum | PB-C09 | snippet (mismatch) | claim "SDK 6.8 for B300 uses kernel 4.9.56"; post p=4583437 (nhedgehog, 2026-05-02, PB62x/740 thread) does **not** mention B300 or 4.9.56. p=4522396/p=4429705 not checked |
 | S-PB-08 | https://github.com/karabek/xradio/ | repo | PB-C02 | agent | generic XR819 driver (not PocketBook-specific) |
 
 ## reMarkable
@@ -121,7 +125,7 @@ All accessed 2026-10-31 unless noted.
 | S-OTH-01 | https://wiki.mobileread.com/wiki/PRST2 | wiki | OTH-C04 | agent | Sony PRS-T2 AR6003 |
 | S-OTH-02 | https://www.mobileread.com/forums/showthread.php?p=4558337 | forum | OTH-C01 | agent | Cervantes unlock server down |
 | S-OTH-03 | https://www.mobileread.com/forums/showthread.php?p=4615824 | forum | OTH-C05 | agent | Tolino Shine 5 "Kobo mode" (wipes) |
-| S-OTH-04 | https://www.mobileread.com/forums/showthread.php?p=4421729 | forum | OTH-C05 | agent | Tolino FW 5.x ignores KoboRoot.tgz |
+| S-OTH-04 | https://www.mobileread.com/forums/showthread.php?p=4421729 | forum | OTH-C05 | agent (partial mismatch) | thread "Can I convert a Tolino into a kobo?"; post p=4421729 itself (Terisa de morgan, 2024-05-07) is empty. "FW 5.x ignores KoboRoot.tgz" must be elsewhere in the thread (not pinned) |
 | S-OTH-05 | https://www.mobileread.com/forums/showthread.php?p=4267969 ; https://liliputing.com/tolinos-new-ereaders-look-familiar-if-kobo-devices-ran-android/ ; https://www.mobileread.com/forums/showthread.php?p=4541118 ; https://www.github.com/koreader/android-luajit-launcher/pull/457 | forum/news | OTH-C06 | agent | Android Tolinos = Kobo hardware (out of scope, D2) |
 | S-OTH-06 | https://developer.android.com/develop/connectivity/wifi/localonlyhotspot | vendor doc | OTH-C07 | agent | out of scope (D2), kept for traceability |
 | S-OTH-07 | https://raw.githubusercontent.com/koreader/android-luajit-launcher/master/assets/android.lua ; https://raw.githubusercontent.com/koreader/android-luajit-launcher/master/app/src/main/AndroidManifest.xml | source | OTH-C07 | agent | out of scope (D2) |
@@ -178,3 +182,33 @@ All accessed 2026-10-31 unless noted.
 | S-BRCM-11 | https://git.depau.eu/mochabin/imx-firmware/commits/tag/android-10.0.0_2.5.0 | git log mirror | BRCM-C07 | snippet | host didn't resolve; "fw_bcmdhd.bin supports STA, Soft AP, STA+Soft AP" since bcmdhd 1.141.100.6 |
 | S-BRCM-12 | https://coral.googlesource.com/imx-firmware/+/refs/heads/release-day/bcm/1DX_BCM4343W | firmware mirror | BRCM-C08 | agent | NXP 1DX `fw_bcmdhd.bin` (NXP licence) |
 | S-BRCM-13 | https://lists.openwall.net/netdev/2017/05/21/34 | mailing list | BRCM-C08 | agent | DHD firmware under brcmfmac |
+
+## Attribution (authors of forum posts and repos)
+
+Checked 2026-10-31 for crediting in public posts (e.g. a MobileRead call for testers). Fetched with `showpost.php?p=<id>` (single post) or `showthread.php?p=<id>` (page). "match" = whether the post itself supports the claim it is cited for.
+
+| Source | Author | Date | Thread / repo | match |
+|---|---|---|---|---|
+| S-LOC-05 | Ying Stokes (`thorondir`) | 2026-07-22 | thorondir/hotspot.koplugin | yes |
+| S-FS-01 | abrahamnm (+ contributors) | — | abrahamnm/filesync.koplugin | yes |
+| S-KOR-10 | winterwurzel | 2026-10-12 | koreader#16222 "Kobo FW 5.x (MTK): Wi-Fi can't come up when KOReader starts without Nickel" (WMT-daemon fix, tested on a Tolino Vision Color) | yes |
+| S-KOR-11 | shuvashish76 (diagnosis: shuvashish76, NiLuJe) | 2025-02-02 | koreader#13197 "Clara BW: Device reboots when turning on wifi 1st time…" | yes |
+| S-KIN-01, S-KIN-02, S-KIN-23..25 | zampierilucas | — | kindle-ble-hid, kindle-hid-passthrough | yes |
+| S-KIN-03..10 | katadelos | — | linux-3.0.35-lab126 (mirror of Amazon's GPL release) | yes |
+| S-KIN-11 | gdamjan | — | PW2 gist | yes |
+| S-KIN-12 | Bergfux, post #392 | 2018-07-09 | "Serial Jailbreaking your fw >= 5.6.x Kindle for Dummies" (KT3 boot log). The `p=3726053` link lands on that page but p=3726053 itself is dsjstc's #393 | yes (page) |
+| S-KIN-13 | rahuldhebri | 2021-06-27 | same thread, second KT3 boot log | yes |
+| S-KIN-14 | bdm310, post #3 | 2021-03-17 | "PW3 Kindle Paperwhite 3 Schematics and Mainline u-boot/Linux" | yes |
+| S-KIN-15 | katadelos | 2022-05-12 | "K5 Can't get self-compiled ar6003 module to work" (`firmware.sh` absent from non-Amazon builds; the `/opt/ar6k` path is elsewhere in the thread) | partial |
+| S-KIN-27 | liquidguru | — | PW6 notes gist | yes |
+| S-KIN-28 | abhaymettu | — | omarchy-kindle | yes |
+| S-KIN-29 | SolAstrius | — | kexec-kindle-mt8512 | yes |
+| S-KIN-30, S-KIN-33 | NiLuJe | — | KindleTool, koxtoolchain | yes |
+| S-KIN-35 | morinew, post #3 | 2015-07-01 | "Disable connectivity check / connect to "island" WiFi" | yes |
+| S-KIN-37 | knc1 | 2013-02-06 | "Managing the Kindle firewall" | yes |
+| S-KIN-40, S-KIN-41 | unrealJune | 2026-08-17 | "Quick Share/Nearby Share Plugin for KoReader" / kindshare (MIT) | yes |
+| S-PB-08 | karabek | — | xradio | yes |
+| S-RM-08 | dkyates79 | 2026-04-08 | "KOReader on rM Paper Pro Move – installation & configuration" (FW 3.27.0.87, AppLoad not appearing) | yes |
+| S-OTH-02 | iluuuk | 2026-01-05 | "KOReader running on BQ/Fnac devices" | partial (thread-level) |
+| S-OTH-03 | bosa | 2026-10-13 | "NickelTiles: an app tile grid for the Kobo home screen (testers wanted)": Tolino Shine 5 (Clara BW hardware) running Kobo Clara BW FW 4.45.23697 | partial (no mention of the wipe) |
+| S-KIN-16, S-KIN-18, S-KIN-39, S-PB-07 | — | — | see rows above | **no** |

@@ -1,0 +1,139 @@
+=== Thread title (paste into the "Title" field) ===
+
+hotspot.koplugin: turn your e-reader into a Wi-Fi access point (Kobo now; Kindle, PocketBook, reMarkable next)
+
+=== Post body (vBulletin BBCode, paste as-is) ===
+
+[SIZE=4][B]hotspot.koplugin: your e-reader as a Wi-Fi access point[/B][/SIZE]
+
+Hi all,
+
+[B]hotspot.koplugin[/B] is a small KOReader plugin that makes the e-reader broadcast its own Wi-Fi network: hostapd runs the access point, BusyBox udhcpd hands out addresses. It does [I]not[/I] share an internet connection. The point is to connect a phone, a laptop or another stock ereader [I]directly[/I] to the reader when there's no router around and move books over that link.
+
+The plugin was written by [B]Ying Stokes[/B] ([URL=https://github.com/thorondir/hotspot.koplugin]thorondir/hotspot.koplugin[/URL]) for the Kobo Clara 2E. [URL=https://github.com/pittix/hotspot.koplugin]My fork[/URL] adds the MediaTek Kobos and a research report on other brands. 
+This thread is about going further, and I can't do that by myself: I already extended the code for my Kobo Libra Colour, but that's it.
+
+[SIZE=3][B]What it does[/B][/SIZE]
+[LIST]
+[*]Broadcasts an AP with configurable SSID, channel and optional WPA2 password
+[*]The reader gets 192.168.42.1, clients get DHCP leases in 192.168.42.10-100
+[*]Menu: [I]Settings -> Network -> Wi-Fi hotspot[/I] (can also start automatically with KOReader)
+[*]Built for 1-2 clients at a time
+[/LIST]
+
+My idea was to pair it with [B]filesync.koplugin[/B] by [B]abrahamnm[/B] ([URL=https://github.com/abrahamnm/filesync.koplugin]abrahamnm/filesync.koplugin[/URL]), or any quick-share alternative that may require a wifi connection.
+In my case, the workflow to share the ebooks from my device is that another device joins the reader's hotspot, open filesync URL in their browser, browse and download books. 
+I'm also working on a plain, e-ink-friendly filesync page so that [I]another e-reader's[/I] browser can use it. That's only a branch on my fork for now ([URL=https://github.com/pittix/filesync.koplugin/tree/feat/eink-mode]feat/eink-mode[/URL]), and the upstream PR is still to come. Hotspot + filesync together hasn't been tested end to end on more devices yet, so reports on that are welcome too.
+
+[SIZE=3][B]Current status[/B][/SIZE]
+[LIST]
+[*][B]Kobo Clara 2E[/B] (Marvell/NXP moal, AP on uap0): tested
+[*][B]Kobo Libra Colour[/B] (MediaTek wlan_drv_gen4m, AP on ap0): tested (FW 4.46.23836, KOReader v2026.07.2)
+[*][B]Kobo Clara BW / Clara Colour[/B]: [B]untested[/B], same MediaTek driver as the Libra Colour, so it should work
+[*][B]Other Kobos[/B]: the plugin says the Wi-Fi chip isn't supported yet. Tell me your WIFI_MODULE (see below)
+[*][B]Kindle, PocketBook, reMarkable, others[/B]: not supported yet. A desk-research report covers which ones look feasible: [URL=https://github.com/pittix/hotspot.koplugin/blob/other-models/docs/other-ereaders-report.md]report[/URL]
+[/LIST]
+
+[SIZE=3][B]What the research says about other devices[/B][/SIZE]
+Short version. Details and every source are in the report.
+[LIST]
+[*][B]Kindle with MediaTek Wi-Fi[/B] (PW5/PW5 SE, Basic 2022/2024, PW6, Scribe 1/2, Colorsoft): [B]most promising[/B]. A MediaTek Kindle dump shows the same Wi-Fi modules as the Libra Colour (wmt_drv / wmt_chrdev_wifi / wlan_drv_gen4m), kernel 4.9, and KOReader runs as root there. What's missing is Kindle glue: take Wi-Fi over from Amazon's wifid, open the firewall, keep the screensaver off.
+[*][B]Kindle Voyage[/B] (Atheros AR6003): [B]already done by someone else![/B] [B]unrealJune[/B]'s kindshare runs hostapd + busybox udhcpd as a SoftAP on a Voyage (FW 5.13.6) with the stock ath6kl driver. See the credits below.
+[*][B]Kindle PW2 / PW3 / Basic 7th[/B] (Atheros): depends on whether your firmware loads ath6kl (like the Voyage) or Amazon's older ar6003/ar6000 driver. One lsmod line tells us which.
+[*][B]Kindle Basic 8th gen, PW4, Basic 10th, Oasis 2/3[/B] (Broadcom BCM4343W): likely. The Basic 8th gen uses bcmdhd with cfg80211, the usual AP setup for that chip. The others are probably the same, unconfirmed.
+[*][B]PocketBook B288 devices[/B] (Touch Lux 4/5, InkPad 3, Touch HD 3, Color, InkPad X, ...): likely [B]if rooted[/B]. PocketBook's published kernel has cfg80211/mac80211 and an XRadio driver that should be able to do AP. Without root, KOReader can't start hostapd.
+[*][B]PocketBook B300[/B] (newest models): unknown, the Wi-Fi driver hasn't been identified.
+[*][B]reMarkable 1/2[/B]: likely (brcmfmac, root over SSH).
+[*][B]Cervantes, Bookeen, older Kindles/PocketBooks, Sony PRS-T[/B]: possible with a lot of work, or unlikely.
+[*][B]Android readers (Boox etc.)[/B]: out of scope, they already have a system hotspot.
+[/LIST]
+Nothing outside Kobo has been tried on a device yet, and that's where you may come in.
+
+[SIZE=3][B]How you can help[/B][/SIZE]
+
+[B]1. Kobo owners: try it[/B]
+Especially Clara BW, Clara Colour, and Tolinos running the Kobo build of KOReader on MediaTek hardware.
+[LIST=1]
+[*]Download the [URL=https://github.com/pittix/hotspot.koplugin/archive/refs/heads/main.zip]main branch zip[/URL], rename the extracted folder to [B]hotspot.koplugin[/B], copy it to [I].adds/koreader/plugins/[/I]
+[*]Restart KOReader, open [I]Settings -> Network -> Wi-Fi hotspot[/I], set a password, enable it
+[*]Join from your phone, check you get a 192.168.42.x address, then try filesync or SSH on 192.168.42.1
+[*]Post your model, firmware, KOReader version, whether it worked, and any message the plugin showed. Feel free to commit to the github repo as well :D
+[/LIST]
+On MediaTek Kobos the chip can't be a client and an AP at the same time, so the plugin turns normal Wi-Fi off first (it asks before doing so). Keep the reader awake while you use it: KOReader turns Wi-Fi off on sleep, and that stops the hotspot too.
+If your Kobo says "not supported", post the output of [I]echo $WIFI_MODULE[/I] (from KOReader's terminal) together with the check in step 2.
+
+[B]2. Everyone else (Kindle, PocketBook, reMarkable, Cervantes, Bookeen, unsupported Kobos): run a read-only check[/B]
+These commands only read information; they change nothing. Run them as root (KOReader's terminal or SSH; on a rooted PocketBook, through su) and paste the output inside CODE tags (the # button in the editor).
+[CODE]
+uname -a
+grep -E 'Hardware|Features' /proc/cpuinfo
+lsmod
+ls /sys/class/net/ /sys/class/ieee80211/
+for d in /sys/class/net/*/device/driver; do echo "$d -> $(readlink -f $d)"; done
+zcat /proc/config.gz 2>/dev/null | grep -E 'CFG80211|NL80211|WIRELESS_EXT|NETFILTER'
+for b in iw ip ifconfig iwconfig hostapd udhcpd iptables busybox; do printf '%s: ' $b; which $b || echo missing; done
+iw list 2>/dev/null | sed -n '/Supported interface modes/,/Supported commands/p'
+iw list 2>/dev/null | grep -A6 'interface combinations'
+[/CODE]
+Extra lines for some platforms:
+[CODE]
+# Kindle (any model)
+status wifid; status wmt; ls -l /dev/wmtWifi 2>/dev/null; iptables-save
+# Kindle with Broadcom (Basic 8th/10th, PW4, Oasis)
+for p in /sys/module/*dhd*/parameters/*; do echo "$p: $(cat $p)"; done
+# PocketBook
+id; ls -l /mnt/secure/su; ps | grep -Ei '[n]etagent|[w]pa_'
+[/CODE]
+Please remove anything personal before posting (MAC addresses, network names, serial numbers). These commands shouldn't print any, but check anyway.
+
+[B]3. MediaTek Kindle owners who want to go one step further (optional, at your own risk)[/B]
+This single test would tell us whether the Kindle port can reuse the Libra Colour code. It switches the Wi-Fi chip to AP mode the way the plugin does on Kobo, and checks whether an [I]ap0[/I] interface appears. Wi-Fi is off during the test. On Kobo, doing this while MediaTek's firmware daemons aren't running reboots the device, so the first line checks for them. If it prints nothing, stop there.
+[CODE]
+ps | grep -i '[w]mt'      # expect wmt_launcher / wmt_loader; stop here if empty
+lipc-set-prop com.lab126.cmd wirelessEnable 0; sleep 3; stop wifid
+echo A > /dev/wmtWifi; sleep 3; ls /sys/class/net; dmesg | tail -40
+# restore
+echo 0 > /dev/wmtWifi; start wifid; lipc-set-prop com.lab126.cmd wirelessEnable 1
+[/CODE]
+
+[B]Report template[/B]
+[CODE]
+Device / model:
+Firmware:
+KOReader version:
+Jailbroken / rooted: yes / no
+What I tried (1, 2 or 3):
+Result / output:
+[/CODE]
+Results will be recorded in the repo's research notes and credited to your forum name, unless you'd rather not be named.
+
+=== OPTIONAL SPLIT POINT ===
+(The whole body is ~13,000 characters. If the forum rejects it as too long, end the first post here,
+adding the line: "Credits and sources are in the next post, they didn't fit here."
+Then post everything below this block as the first reply. Delete this block either way.)
+=== END SPLIT NOTE ===
+
+[SIZE=3][B]Credits and sources[/B][/SIZE]
+This builds on a lot of other people's work. Thank you all, and please tell me if I've credited anything wrongly:
+[LIST]
+[*][B]Ying Stokes[/B] ([URL=https://github.com/thorondir/hotspot.koplugin]thorondir[/URL]): the original hotspot.koplugin.
+[*][B]abrahamnm[/B] and contributors: [URL=https://github.com/abrahamnm/filesync.koplugin]filesync.koplugin[/URL].
+[*][B]The KOReader team[/B], especially [B]NiLuJe[/B]: the Kindle/Kobo/PocketBook platform code the research reads from, plus [URL=https://github.com/NiLuJe/KindleTool]KindleTool[/URL] and [URL=https://github.com/NiLuJe/koxtoolchain]koxtoolchain[/URL].
+[*][B]shuvashish76[/B] and [B]NiLuJe[/B] diagnosed the MediaTek "reboot on first Wi-Fi" problem ([URL=https://github.com/koreader/koreader/issues/13197]koreader#13197[/URL]). [B]winterwurzel[/B] wrote the WMT-daemon fix the plugin uses on MediaTek Kobos ([URL=https://github.com/koreader/koreader/issues/16222]koreader#16222[/URL]).
+[*][B]unrealJune[/B]: [URL=https://www.mobileread.com/forums/showthread.php?p=4604552]Quick Share/Nearby Share Plugin for KoReader[/URL] and [URL=https://github.com/unrealJune/kindshare]kindshare[/URL], the first working hostapd SoftAP on a Kindle that I know of (Voyage, stock ath6kl). Its notes are the best Kindle reference we have: WPA2 is required, AR6003 needs 11g without HT/WMM, and it covers wifid and firewall handling.
+[*][B]zampierilucas[/B]: the MediaTek Kindle system dump in [URL=https://github.com/zampierilucas/kindle-ble-hid]kindle-ble-hid[/URL], which showed the same Wi-Fi modules as the Libra Colour, and the per-model data in [URL=https://github.com/zampierilucas/kindle-hid-passthrough]kindle-hid-passthrough[/URL].
+[*][B]katadelos[/B]: the [URL=https://github.com/katadelos/linux-3.0.35-lab126]linux-3.0.35-lab126[/URL] mirror of Amazon's GPL kernel (ath6kl compat-wireless, wario defconfig), and the firmware-loading notes in [URL=https://www.mobileread.com/forums/showthread.php?p=4221618]K5 Can't get self-compiled ar6003 module to work[/URL].
+[*][B]bdm310[/B]: [URL=https://www.mobileread.com/forums/showthread.php?p=4103442]PW3 Kindle Paperwhite 3 Schematics and Mainline u-boot/Linux[/URL] (AR6003 on upstream ath6kl, board-data file).
+[*][B]Bergfux[/B] and [B]rahuldhebri[/B]: Kindle Basic 8th-gen serial boot logs that show the bcmdhd driver and firmware ([URL=https://www.mobileread.com/forums/showthread.php?p=3726053]post #392[/URL] and [URL=https://www.mobileread.com/forums/showthread.php?p=4133943]a 2021 log[/URL] in the serial-console thread).
+[*][B]knc1[/B]: [URL=https://www.mobileread.com/forums/showthread.php?p=2413909]Managing the Kindle firewall[/URL]. [B]morinew[/B]: restarting wifid via upstart in [URL=https://www.mobileread.com/forums/showthread.php?t=262385]Disable connectivity check / connect to "island" WiFi[/URL].
+[*][B]liquidguru[/B] ([URL=https://gist.github.com/liquidguru/1e9c77f9389cdf23f94d2a94b220c90a]PW6 notes[/URL]), [B]SolAstrius[/B] ([URL=https://github.com/SolAstrius/kexec-kindle-mt8512]kexec-kindle-mt8512[/URL]), [B]abhaymettu[/B] ([URL=https://github.com/abhaymettu/omarchy-kindle]omarchy-kindle[/URL]) and [B]gdamjan[/B] ([URL=https://gist.github.com/gdamjan/13fc8c75a2f8bb34541da0948739baed]PW2 dump[/URL]): MediaTek and Atheros Kindle details.
+[*][B]PocketBook[/B] for publishing their GPL kernels ([URL=https://github.com/pocketbook/kernel-b288]kernel-b288[/URL], [URL=https://github.com/pocketbook/kernel-b300]kernel-b300[/URL]), and [B]karabek[/B] for [URL=https://github.com/karabek/xradio]xradio[/URL].
+[*][B]reMarkable[/B] ([URL=https://github.com/reMarkable/brcmfmac-firmware]brcmfmac-firmware[/URL], [URL=https://github.com/reMarkable/linux-imx-rm]linux-imx-rm[/URL]), the [URL=https://remarkable.guide/]remarkable.guide[/URL] authors, and [B]dkyates79[/B] ([URL=https://www.mobileread.com/forums/showthread.php?p=4578364]KOReader on rM Paper Pro Move[/URL]).
+[*][B]bosa[/B] (the [URL=https://www.mobileread.com/forums/showthread.php?p=4615824]NickelTiles[/URL] thread, with a Tolino Shine 5 running Kobo Clara BW firmware) and [B]iluuuk[/B] ([URL=https://www.mobileread.com/forums/showthread.php?p=4558337]KOReader running on BQ/Fnac devices[/URL]).
+[*]Outside e-readers: [URL=https://docs.raspap.com/]RaspAP[/URL], the [URL=https://wiki.somlabs.com/index.php/How_to_use_Murata_WiFi_on_VisionSOM-6ULL]SoMLabs wiki[/URL] (bcmdhd AP on the same Murata module as the Broadcom Kindles), Digi's ConnectCore 6 docs, and the Linux ath6kl/brcmfmac developers and linux-firmware maintainers.
+[/LIST]
+The full list (about 130 sources, each with what it supports and how to re-check it) is in [URL=https://github.com/pittix/hotspot.koplugin/blob/other-models/docs/research/sources.md]sources.md[/URL]. Jailbreak and root methods are deliberately left out of the report and of this post; please use the existing threads for those.
+
+The research was compiled with the help of an AI assistant and checked against the primary sources linked above. That's exactly why it needs real devices to confirm or disprove it.
+
+Thanks!

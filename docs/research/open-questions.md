@@ -55,8 +55,10 @@ iw dev wlan0 interface add ap0 type __ap   # while connected as client
 # expect AP-ENABLED; join from a phone; check udhcpd lease and ping 192.168.42.1
 ```
 
-### Q-KIN-06: Atheros Kindles: are ath6kl/cfg80211 modules shipped, and is cfg80211 a module? (KIN-C18, KIN-C19)
+### Q-KIN-06: Atheros Kindles: are ath6kl/cfg80211 modules shipped, and is cfg80211 a module? (KIN-C18, KIN-C19, KIN-C27)
 ```sh
+lsmod | grep -iE 'ath6kl|ar6000|ar6003'          # ath6kl_sdio loaded => Voyage-like, kindshare recipe applies (KIN-C28)
+iw phy phy0 info | sed -n '/Supported interface modes/,/^\t[A-Z]/p'   # need "* AP"
 find /lib/modules/$(uname -r) -name '*ath6kl*' -o -name 'cfg80211.ko' -o -name 'compat*.ko' -o -name 'ar6003.ko'
 modinfo <each>.ko | grep -E 'vermagic|parm'     # board_data_file?
 zcat /proc/config.gz | grep -E 'CFG80211|ATH6KL|AR6003'

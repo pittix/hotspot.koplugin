@@ -14,7 +14,8 @@ families: [mediatek, broadcom, atheros, legacy]
 | Broadcom BCM4343W | Basic 8th gen | **Likely** (driver verified) | KIN-C23, BRCM-C06, BRCM-C07 |
 | Broadcom BCM4343W | PW4, Basic 10th, Oasis 2/3 | Probably likely (driver inferred) | KIN-C06, BRCM-C05 |
 | Broadcom | Oasis 1 | Possible with more work | KIN-C26 |
-| Atheros AR6003 | PW2, Basic 7th, Voyage, PW3 | Possible with work, path known | KIN-C18, KIN-C20, KIN-C21, ATH-C* |
+| Atheros AR6003 | Voyage (FW 5.13.6) | **Works (third party, kindshare)**; plugin port = glue only + musl/older-kernel hostapd | KIN-C27, KIN-C28 |
+| Atheros AR6003 | PW2, Basic 7th, PW3 | Possible with work, path known. First check `lsmod` for `ath6kl_sdio` (→ like Voyage) vs `ar6003`/`ar6000` | KIN-C18, KIN-C19, KIN-C20, KIN-C21, ATH-C* |
 | Atheros AR6003 | K4, Touch, PW1 | Unlikely (kernel 2.6.31) | KIN-C06 |
 | unknown | Scribe 3, Scribe Colorsoft (2025) | Unknown | KIN-C06 |
 | legacy ARMv6 | K2, DX, K3 | Out of scope | KIN-C06 |
@@ -78,6 +79,7 @@ families: [mediatek, broadcom, atheros, legacy]
 - sources: S-KIN-04, S-KIN-11, S-KIN-16, S-KIN-17, S-KIN-18, S-KIN-19, S-KIN-20, S-KIN-21, S-KIN-22, S-KIN-23, S-KIN-24, S-KIN-25, S-KIN-26, S-KIN-29, S-KIN-30, S-KIN-31, S-KOR-01
 - recheck: each source; on device `uname -r; lsmod; readlink -f /sys/class/net/wlan0/device/driver`
 - notes: vs BASE-C01, kernels 3.10, 4.1 and 4.9 run the current hostapd; **3.0.35 and 2.6.31 need a rebuilt hostapd** (musl)
+- correction (2026-10-31, KIN-C27): the Voyage on FW 5.13.6 runs `ath6kl_sdio`, not vendor `ar6003`. The wario row's driver column holds for the PW2 dump (S-KIN-11) only; other wario models/firmware may differ. S-KIN-16 and S-KIN-18 turned out not to support this table (see sources.md)
 
 ### KIN-C07: userland ABI
 - claim: firmware ≥ 5.16.3 is armhf (KOReader `kindlehf` build); `kindlepw2` (softfp) covers up to 5.16.2.1.1. KOReader detects it via `/lib/ld-linux-armhf.so.3`.
@@ -140,8 +142,8 @@ families: [mediatek, broadcom, atheros, legacy]
 ### KIN-C16: no prior art for hostapd on Kindle
 - claim: no report of hostapd or a soft AP on any Kindle was found. The closest is a 2011 K3 thread about `/etc/init.d/wifi --mode=ap`, never shown working.
 - confidence: medium (negative result)
-- status: agent
-- sources: S-KIN-39
+- status: **contradicted** (2026-10-31) by KIN-C27: kindshare runs a hostapd SoftAP on a Voyage. Also S-KIN-39's cited posts don't mention AP mode at all
+- sources: S-KIN-39, S-KIN-40
 
 ### KIN-C17: jailbreak availability (existence only, per D4)
 - claim: as of Oct 2026, public jailbreaks exist for most firmware up to 5.19.x, including PW6, Colorsoft and Scribe 2. Status for 5.20.x is unknown.
@@ -209,6 +211,21 @@ families: [mediatek, broadcom, atheros, legacy]
 - status: agent / inference
 - sources: S-KIN-05
 
+### KIN-C27: hostapd SoftAP already works on a Kindle Voyage (kindshare)
+- claim: unrealJune's kindshare (MIT; a Quick Share receiver shipped as a KOReader plugin) has an optional SoftAP mode, "verified end to end on a Kindle Voyage, firmware 5.13.6 (kernel 3.0.35-lab126, Atheros AR6003 / `ath6kl_sdio`)". The stock driver is "upstream `ath6kl_sdio` (compat-wireless backport), v3.4.0.158". The AP is "a cross-compiled hostapd plus busybox udhcpd". Some Kindles ship Amazon's proprietary `ar6000.ko` (wireless extensions), which can't do this. Check: `lsmod | grep -iE 'ath6kl|ar6000'` and `iw phy phy0 info` for `* AP`.
+- confidence: high (what the author reports); not tested by us
+- status: verified (source text)
+- sources: S-KIN-40, S-KIN-41
+- notes: makes the Voyage the cheapest Atheros target: no module build. Confirms Amazon ships the compat-wireless ath6kl from KIN-C20/KIN-C21 on at least one model. kindshare doesn't say which other models use ath6kl.
+
+### KIN-C28: kindshare's Voyage AP recipe and pitfalls
+- claim: `device/kindle-ap.sh`: `stop wifid`; `killall wpa_supplicant`; `modprobe ath6kl_sdio` if needed; `ifconfig wlan0 up`; `hostapd -dd <conf>` on **`wlan0`** (no separate AP interface); `ifconfig wlan0 192.168.55.1 netmask 255.255.255.0`; `udhcpd -f <conf>`; `iptables -I INPUT 1 -i wlan0 -j ACCEPT` plus UDP 67 in/out and service ports. Stop: kill hostapd/udhcpd, `ifconfig wlan0 0.0.0.0 down`, delete the iptables rules, `start wifid`. A dead-man timer reverts after 600 s without a client. hostapd 2.11, static armv7, built in Docker under QEMU. Config is "deliberately conservative": 802.11g, no HT, no WMM, WPA2-PSK, `dtim_period=1`, described as load-bearing on AR6003. **Open (no-WPA) networks never authorize the client on this firmware**, so WPA2 is mandatory. `lipc` isn't used.
+- confidence: high (source text)
+- status: verified (source text)
+- sources: S-KIN-41
+- implemented: 2026-10-31 as the `ath6kl_sdio` backend in `main.lua` (platform `kindle`), with `hostapd.musl` built by `tools/build-hostapd-musl.sh` (kindshare's versions and defconfig, Bootlin musl cross-toolchain). Exercised only in a mock harness that records commands; **not yet run on a device**. Differences from kindshare: 192.168.42.1/24 instead of 192.168.55.1, only `-i/-o wlan0` firewall rules (no per-port rules), adds `preventScreenSaver`, no dead-man timer
+- notes: matches the plugin's model (hostapd + udhcpd + static IP), and confirms KIN-C09 (`stop/start wifid`) and KIN-C10 (firewall) on a real device. hostapd's libc isn't stated; kernel 3.0.35 < 3.2 suggests musl or an old-kernel glibc build (BASE-C01). The plugin would need: WPA2 forced on, `ieee80211n=0`/`wmm_enabled=0`, `wlan0` as AP interface.
+
 ## Porting sketch: MTK Kindles (inference, needs Q-KIN-01..05)
 
 1. Detection: `Device:isKindle() and Device:isMTK()`, `/dev/wmtWifi` exists, `/sys/module/wlan_drv_gen4m` present.
@@ -232,6 +249,7 @@ families: [mediatek, broadcom, atheros, legacy]
 
 ## Porting sketch: Atheros Kindles (inference, needs Q-KIN-06)
 
+0. `lsmod | grep -iE 'ath6kl|ar6000|ar6003'`. If `ath6kl_sdio` is loaded (Voyage FW 5.13.6, KIN-C27), skip steps 1–3 and follow kindshare's recipe (KIN-C28) with the plugin's hostapd/udhcpd.
 1. Check whether `/lib/modules` already has ath6kl/cfg80211. If not, build them from the 3.0.35-lab126 tree with `imx60_wario_defconfig` (vermagic match). Fallback: backports-4.4.2.
 2. Bundle linux-firmware `ath6k/AR6003/hw2.1.1`; pass `board_data_file=` (device calibration or `bdata.SD32.bin`).
 3. `stop wifid`, `rmmod ar6003`, `insmod` compat/cfg80211/ath6kl modules, then hostapd (`hw_mode=g`, `ieee80211n=0`), IP, firewall, udhcpd. Reverse on stop.

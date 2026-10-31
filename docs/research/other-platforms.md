@@ -48,7 +48,7 @@ last_reviewed: 2026-10-31
 - confidence: medium
 - status: agent
 - sources: S-OTH-03, S-OTH-04
-- notes: in Kobo mode it inherits whatever the Kobo MediaTek backend does
+- notes: in Kobo mode it inherits whatever the Kobo MediaTek backend does. 2026-10-31: S-OTH-03 (bosa, NickelTiles thread) confirms a Tolino Shine 5 running Kobo Clara BW FW 4.45.23697 but doesn't mention the wipe; S-OTH-04's cited post is empty (see sources.md). Also koreader#16222's WMT fix was tested on a **Tolino Vision Color** (S-KOR-10), so MTK Tolinos running KOReader are candidate testers
 
 ### OTH-C06: Android Tolinos are Kobo hardware (out of scope)
 - claim: Shine 4 = Clara 2E, Vision 6 ≈ Libra 2, Epos 3 = Sage, running Android. KOReader needs root there.

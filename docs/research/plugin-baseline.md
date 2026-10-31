@@ -37,7 +37,7 @@ last_reviewed: 2026-10-31
   On MediaTek it also starts `wmt_loader`/`wmt_launcher` if missing (koreader#16222) and treats STA/AP as exclusive.
 - confidence: high
 - status: verified
-- sources: S-LOC-03, S-LOC-04, S-KOR-10, S-KOR-11
+- sources: S-LOC-03, S-LOC-04, S-LOC-05 (upstream original), S-KOR-10, S-KOR-11
 - recheck: read `main.lua` (`BACKENDS`, `Device:isKobo`, `WIFI_MODULE`, `enable-wifi.sh`)
 - notes: **The Kobo-isms to abstract for any port**:
   - the `isKobo` guard
