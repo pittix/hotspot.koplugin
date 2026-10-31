@@ -13,23 +13,50 @@ local _ = require("gettext")
 local T = ffiutil.template
 
 -- Requires a wifi chip whose driver can run an access point (see BACKENDS).
--- Currently only tested on Kobo.
-if not Device:isKobo() then
+-- Tested on Kobo. The Kindle backend follows a recipe verified on a Kindle Voyage
+-- by kindshare (see README), but has not been tested with this plugin yet.
+if not (Device:isKobo() or Device:isKindle()) then
     return { disabled = true }
 end
 
--- Supported wifi drivers, keyed by the WIFI_MODULE variable KOReader exports.
+local PLATFORM = Device:isKindle() and "kindle" or "kobo"
+
+-- Supported wifi drivers, keyed by kernel module name. On Kobo the driver comes
+-- from the WIFI_MODULE variable KOReader exports; on Kindle it is detected from
+-- the loaded kernel modules.
 local BACKENDS = {
     -- Marvell/NXP 88W8987 (Kobo Clara 2E): the moal driver exposes a uap0 virtual AP interface.
-    moal = { iface = "uap0" },
+    moal = { platform = "kobo", iface = "uap0" },
     -- MediaTek MT8113 (Kobo Libra Colour, and likely Clara BW / Clara Colour):
     -- writing "A" to /dev/wmtWifi switches the chip to AP mode and creates ap0,
     -- writing "0" leaves AP mode and powers wifi off (like KOReader's disable-wifi.sh).
     -- The chip cannot be a wifi client and an access point at the same time.
-    wlan_drv_gen4m = { iface = "ap0", wmt = "/dev/wmtWifi" },
+    wlan_drv_gen4m = { platform = "kobo", iface = "ap0", wmt = "/dev/wmtWifi" },
+    -- Atheros AR6003 with Amazon's ath6kl_sdio driver (Kindle Voyage on firmware 5.13.6).
+    -- Recipe from unrealJune's kindshare (https://github.com/unrealJune/kindshare):
+    -- the access point runs on wlan0 itself, so Amazon's wifid and wpa_supplicant
+    -- are stopped while it runs, and the stock firewall (INPUT policy DROP) needs
+    -- ACCEPT rules. The kernel (3.0.35) is too old for the glibc hostapd, hence the
+    -- musl build. The chip's firmware never authorizes clients on an open network,
+    -- and drops clients when HT/WMM are advertised, so WPA2 and plain 802.11g are forced.
+    ath6kl_sdio = {
+        platform = "kindle",
+        iface = "wlan0",
+        module = "ath6kl_sdio",
+        hostapd = "hostapd.musl",
+        require_wpa2 = true,
+        system_udhcpd = true,
+        hostapd_extra =
+            "ieee80211n=0\n"  ..
+            "wmm_enabled=0\n" ..
+            "auth_algs=1\n"   ..
+            "dtim_period=1\n" ..
+            "beacon_int=100\n" ..
+            "max_num_sta=4\n",
+    },
 }
-local WIFI_MODULE = os.getenv("WIFI_MODULE")
-local BACKEND = WIFI_MODULE and BACKENDS[WIFI_MODULE]
+-- Kindle wifi drivers to look for, so that an unsupported one can be named to the user.
+local KINDLE_DRIVERS = { "ath6kl_sdio", "ar6003", "ar6000", "wlan_drv_gen4m", "bcmdhd", "dhd", "brcmfmac" }
 
 local SENTINEL        = "/tmp/koreader_hotspot_active"
 local UDHCPD_PID      = "/tmp/koreader_udhcpd.pid"
@@ -37,6 +64,8 @@ local UDHCPD_LEASES   = "/tmp/koreader_udhcpd.leases"
 local UDHCPD_CONF     = "/tmp/koreader_udhcpd.conf"
 local HOSTAPD_PID     = "/tmp/koreader_hostapd.pid"
 local HOSTAPD_CONF    = "/tmp/koreader_hostapd.conf"
+local HOSTAPD_LOG     = "/tmp/koreader_hostapd.log"
+local FIREWALL_STATE  = "/tmp/koreader_hotspot_iptables"
 
 local function isModuleLoaded(name)
     local f = io.open("/proc/modules", "r")
@@ -50,6 +79,102 @@ local function isModuleLoaded(name)
     end
     f:close()
     return false
+end
+
+-- The detected wifi driver, and its backend once a supported one is found.
+-- Detection is retried until then: on Kindle the driver may only be loaded
+-- after Wi-Fi has been turned on.
+local DRIVER, BACKEND
+
+local function detectBackend()
+    if BACKEND then return BACKEND end
+    if PLATFORM == "kobo" then
+        DRIVER = os.getenv("WIFI_MODULE")
+    else
+        DRIVER = nil
+        for _i, name in ipairs(KINDLE_DRIVERS) do
+            if isModuleLoaded(name) then
+                DRIVER = name
+                break
+            end
+        end
+    end
+    local backend = DRIVER and BACKENDS[DRIVER]
+    -- A backend only applies to its own platform (e.g. the Kobo MediaTek
+    -- backend relies on Kobo's wifi scripts).
+    if backend and backend.platform == PLATFORM then
+        BACKEND = backend
+    end
+    return BACKEND
+end
+
+local function requiresWpa2()
+    local backend = detectBackend()
+    return backend ~= nil and backend.require_wpa2 == true
+end
+
+local function hasCommand(name)
+    return os.execute("command -v " .. name .. " >/dev/null 2>&1") == 0
+end
+
+-- Kindle's BusyBox may lack `ip`, so these fall back to ifconfig.
+local function setAddress(iface)
+    if hasCommand("ip") then
+        return os.execute("ip addr add 192.168.42.1/24 dev " .. iface) == 0
+    end
+    return os.execute("ifconfig " .. iface .. " 192.168.42.1 netmask 255.255.255.0 up") == 0
+end
+
+local function flushAddress(iface)
+    if hasCommand("ip") then
+        os.execute("ip addr flush dev " .. iface .. " 2>/dev/null")
+    else
+        os.execute("ifconfig " .. iface .. " 0.0.0.0 2>/dev/null")
+    end
+end
+
+local function setLink(iface, up)
+    if hasCommand("ip") then
+        os.execute("ip link set " .. iface .. (up and " up" or " down"))
+    else
+        os.execute("ifconfig " .. iface .. (up and " up" or " down"))
+    end
+end
+
+-- Kindle: the stock firewall drops new inbound connections (INPUT policy DROP),
+-- which would block DHCP requests and file transfers over the hotspot.
+-- The rules this plugin adds are recorded, so that only those are removed again.
+local FIREWALL_RULES = { "INPUT -i %s -j ACCEPT", "OUTPUT -o %s -j ACCEPT" }
+
+local function openFirewall(iface)
+    local f = io.open(FIREWALL_STATE, "w")
+    for _i, fmt in ipairs(FIREWALL_RULES) do
+        local rule = string.format(fmt, iface)
+        local chain, spec = rule:match("^(%S+) (.*)$")
+        if os.execute("iptables -C " .. rule .. " 2>/dev/null") ~= 0
+                and os.execute("iptables -I " .. chain .. " 1 " .. spec) == 0
+                and f then
+            f:write(rule, "\n")
+        end
+    end
+    if f then f:close() end
+end
+
+local function closeFirewall()
+    local f = io.open(FIREWALL_STATE, "r")
+    if not f then return end
+    for rule in f:lines() do
+        os.execute("iptables -D " .. rule .. " 2>/dev/null")
+    end
+    f:close()
+    os.remove(FIREWALL_STATE)
+end
+
+-- Kindle: keeps powerd from suspending the device while the hotspot runs
+-- (wifi stops on suspend). The same call KOReader's KeepAlive plugin uses.
+local function preventKindleScreenSaver(prevent)
+    os.execute("lipc-set-prop com.lab126.powerd preventScreenSaver "
+        .. (prevent and "1" or "0") .. " >/dev/null 2>&1")
 end
 
 -- Sends a one-character command ("A" or "0") to the MediaTek wifi control device.
@@ -74,7 +199,8 @@ local Hotspot = WidgetContainer:extend{
 }
 
 function Hotspot:init()
-    self.ssid     = G_reader_settings:readSetting("hotspot_ssid")     or "KoboAP"
+    self.ssid     = G_reader_settings:readSetting("hotspot_ssid")
+                    or (PLATFORM == "kindle" and "KindleAP" or "KoboAP")
     self.channel  = G_reader_settings:readSetting("hotspot_channel")  or "6"
     self.security = G_reader_settings:readSetting("hotspot_security") or "open"
     self.password = G_reader_settings:readSetting("hotspot_password") or ""
@@ -156,7 +282,7 @@ end
 -- has loaded them since boot, start the firmware daemons, then cycle
 -- KOReader's own wifi scripts once.
 function Hotspot:ensureMediatekModulesLoaded()
-    if isModuleLoaded(WIFI_MODULE) and isRunningProcess("wmt_launcher") then
+    if isModuleLoaded(DRIVER) and isRunningProcess("wmt_launcher") then
         return true
     end
     local msg = InfoMessage:new{
@@ -169,7 +295,7 @@ function Hotspot:ensureMediatekModulesLoaded()
         logger.info("Hotspot: wifi modules not loaded, cycling enable-wifi.sh and disable-wifi.sh")
         os.execute("./enable-wifi.sh")
         os.execute("./disable-wifi.sh")
-        ok = isModuleLoaded(WIFI_MODULE)
+        ok = isModuleLoaded(DRIVER)
     end
     UIManager:close(msg)
     if not ok then
@@ -181,9 +307,38 @@ function Hotspot:ensureMediatekModulesLoaded()
     return ok
 end
 
+-- Kindle: takes wlan0 over from Amazon's wifid (kindshare's recipe).
+function Hotspot:bringUpKindleInterface()
+    logger.info("Hotspot: stopping wifid and wpa_supplicant")
+    os.execute("stop wifid >/dev/null 2>&1")
+    os.execute("killall wpa_supplicant >/dev/null 2>&1")
+    ffiutil.sleep(2)
+    if not util.pathExists("/sys/class/net/" .. BACKEND.iface) then
+        logger.info("Hotspot: loading", BACKEND.module)
+        os.execute("modprobe " .. BACKEND.module .. " >/dev/null 2>&1")
+        if not self:waitForInterface() then
+            return false
+        end
+    end
+    setLink(BACKEND.iface, true)
+    return true
+end
+
+-- Kindle: gives wlan0 back to wifid, which reconnects as usual.
+function Hotspot:restoreKindleWifi()
+    closeFirewall()
+    flushAddress(BACKEND.iface)
+    setLink(BACKEND.iface, false)
+    logger.info("Hotspot: starting wifid")
+    os.execute("start wifid >/dev/null 2>&1")
+end
+
 -- Makes the AP interface available.
 -- Returns ok, and whether a failure was already reported to the user.
 function Hotspot:bringUpInterface()
+    if BACKEND.platform == "kindle" then
+        return self:bringUpKindleInterface()
+    end
     if not BACKEND.wmt then
         return self:ensureModuleLoaded()
     end
@@ -200,19 +355,22 @@ function Hotspot:bringUpInterface()
     return self:waitForInterface()
 end
 
--- MediaTek: a failed start must not leave the chip in AP mode
--- (KOReader would then believe wifi is on).
+-- A failed start must not leave the chip in AP mode (MediaTek: KOReader would
+-- then believe wifi is on), nor leave wifid stopped (Kindle).
 function Hotspot:abortStart()
     if BACKEND.wmt then
         self:stopHostapd()
         writeWmt("0")
+    elseif BACKEND.platform == "kindle" then
+        self:stopHostapd()
+        self:restoreKindleWifi()
     end
 end
 
 function Hotspot:startHostapd()
-    local bin = self.path .. "/hostapd"
+    local bin = self.path .. "/" .. (BACKEND.hostapd or "hostapd")
     if not util.pathExists(bin) then
-        logger.warn("Hotspot: no hostapd binary found")
+        logger.warn("Hotspot: no hostapd binary found at", bin)
         return false
     end
 
@@ -228,7 +386,10 @@ function Hotspot:startHostapd()
         "ignore_broadcast_ssid=0\n",
         BACKEND.iface, self.ssid, self.channel)
 
-    if self.security == "wpa2" and self.password ~= "" then
+    conf = conf .. (BACKEND.hostapd_extra or "")
+
+    local wpa2 = self.security == "wpa2" or BACKEND.require_wpa2
+    if wpa2 and self.password ~= "" then
         conf = conf .. string.format(
             "wpa=2\n"                    ..
             "wpa_passphrase=%s\n"        ..
@@ -240,11 +401,12 @@ function Hotspot:startHostapd()
     f:write(conf)
     f:close()
 
-    -- hostapd daemonizes itself; -B runs in background, -P writes the pid file
+    -- hostapd daemonizes itself; -B runs in background, -P writes the pid file.
+    -- Errors printed before it daemonizes end up in HOSTAPD_LOG.
     local rc = os.execute(string.format(
-        "%s -B -P %s %s", bin, HOSTAPD_PID, HOSTAPD_CONF))
+        "%s -B -P %s %s >%s 2>&1", bin, HOSTAPD_PID, HOSTAPD_CONF, HOSTAPD_LOG))
     if rc ~= 0 then
-        logger.warn("Hotspot: hostapd failed to start")
+        logger.warn("Hotspot: hostapd failed to start, see", HOSTAPD_LOG)
         return false
     end
     -- give it a moment to bring the interface up before we assign an IP
@@ -266,7 +428,10 @@ end
 
 function Hotspot:startDHCP()
     local bin = self.path .. "/udhcpd"
-    if not util.pathExists(bin) then
+    -- Kindle: the firmware's BusyBox has udhcpd (kindshare uses it).
+    if BACKEND.system_udhcpd and hasCommand("udhcpd") then
+        bin = "udhcpd"
+    elseif not util.pathExists(bin) then
         logger.info("Hotspot: no udhcpd binary found, skipping DHCP")
         return
     end
@@ -304,10 +469,24 @@ end
 function Hotspot:start(done)
     if self:isRunning() then return end
 
-    if not BACKEND then
+    if not detectBackend() then
+        local text
+        if PLATFORM == "kindle" and not DRIVER then
+            text = _("Hotspot: no Wi-Fi driver is loaded.\n\nTurn on Wi-Fi once, then try again.")
+        else
+            text = T(_("Hotspot: this device's Wi-Fi chip (%1) is not supported yet."), DRIVER or _("unknown"))
+        end
         UIManager:show(InfoMessage:new{
             icon = "notice-warning",
-            text = T(_("Hotspot: this Kobo's Wi-Fi chip (%1) is not supported yet."), WIFI_MODULE or _("unknown")),
+            text = text,
+        })
+        return
+    end
+
+    if BACKEND.require_wpa2 and #self.password < 8 then
+        UIManager:show(InfoMessage:new{
+            icon = "notice-warning",
+            text = _("Hotspot: this Wi-Fi chip only works with WPA2.\n\nSet a WPA2 password (at least 8 characters) in the hotspot menu first."),
         })
         return
     end
@@ -329,6 +508,19 @@ function Hotspot:start(done)
         return
     end
 
+    -- Kindle: the access point takes over wlan0, so the normal connection drops.
+    if BACKEND.platform == "kindle" and NetworkMgr:isWifiOn() then
+        UIManager:show(ConfirmBox:new{
+            text = _("While the hotspot runs, the Kindle's normal Wi-Fi is disconnected. It reconnects when you stop the hotspot.\n\nStart the hotspot?"),
+            ok_text = _("Start hotspot"),
+            ok_callback = function()
+                self:startHotspot()
+                if done then done() end
+            end,
+        })
+        return
+    end
+
     self:startHotspot()
     if done then done() end
 end
@@ -336,6 +528,9 @@ end
 function Hotspot:startHotspot()
     local ok, reported = self:bringUpInterface()
     if not ok then
+        if BACKEND.platform == "kindle" then
+            self:abortStart()
+        end
         if reported then return end
         UIManager:show(InfoMessage:new{
             icon = "notice-warning",
@@ -346,23 +541,27 @@ function Hotspot:startHotspot()
 
     logger.info("Hotspot: starting — SSID:", self.ssid, "channel:", self.channel)
 
-    os.execute("ip addr flush dev " .. BACKEND.iface .. " 2>/dev/null")
+    flushAddress(BACKEND.iface)
+    if BACKEND.platform == "kindle" then
+        openFirewall(BACKEND.iface)
+    end
 
     if not self:startHostapd() then
         self:abortStart()
         UIManager:show(InfoMessage:new{
             icon = "notice-warning",
-            text = _("Hotspot: failed to start hostapd. Is the binary installed in the plugin directory?"),
+            text = T(_("Hotspot: failed to start hostapd. Is the binary installed in the plugin directory?\n\nDetails: %1"), HOSTAPD_LOG),
         })
         return
     end
 
-    local rc = os.execute("ip addr add 192.168.42.1/24 dev " .. BACKEND.iface)
-
-    if rc == 0 then
+    if setAddress(BACKEND.iface) then
         local f = io.open(SENTINEL, "w")
         if f then f:close() end
         self:startDHCP()
+        if BACKEND.platform == "kindle" then
+            preventKindleScreenSaver(true)
+        end
 
         UIManager:show(InfoMessage:new{
             timeout = 6,
@@ -384,10 +583,31 @@ function Hotspot:stop(done)
     logger.info("Hotspot: stopping")
     self:stopDHCP()
     self:stopHostapd()
-    os.execute("ip addr flush dev " .. BACKEND.iface .. " 2>/dev/null")
+
+    if not detectBackend() then
+        -- Should not happen: the hotspot was started with a backend.
+        logger.warn("Hotspot: Wi-Fi backend not detected, only clearing state")
+        os.remove(SENTINEL)
+        if done then done() end
+        return
+    end
+
+    if BACKEND.platform == "kindle" then
+        self:restoreKindleWifi()
+        preventKindleScreenSaver(false)
+        os.remove(SENTINEL)
+        if done then done() end
+        UIManager:show(InfoMessage:new{
+            text = _("Hotspot stopped. Wi-Fi is back under the Kindle's control."),
+            timeout = 3,
+        })
+        return
+    end
+
+    flushAddress(BACKEND.iface)
 
     if not BACKEND.wmt then
-        os.execute("ip link set " .. BACKEND.iface .. " down")
+        setLink(BACKEND.iface, false)
         os.remove(SENTINEL)
         if done then done() end
         UIManager:show(InfoMessage:new{
@@ -517,8 +737,8 @@ function Hotspot:addToMainMenu(menu_items)
                 checked_func = function() return self:isRunning() end,
                 check_callback_updates_menu = true,
                 callback = function(touchmenu_instance)
-                    -- On MediaTek, starting can wait for a confirmation dialog,
-                    -- so refresh the menu when the toggle completes.
+                    -- On MediaTek and Kindle, starting can wait for a confirmation
+                    -- dialog, so refresh the menu when the toggle completes.
                     self:onToggleHotspot(function()
                         touchmenu_instance:updateItems()
                     end)
@@ -542,9 +762,10 @@ function Hotspot:addToMainMenu(menu_items)
                 sub_item_table = channel_items,
             },
             {
+                -- Some chips (Kindle AR6003) only work with WPA2.
                 text = _("Open network (no password)"),
-                checked_func = function() return self.security == "open" end,
-                enabled_func = function() return not self:isRunning() end,
+                checked_func = function() return self.security == "open" and not requiresWpa2() end,
+                enabled_func = function() return not self:isRunning() and not requiresWpa2() end,
                 callback = function()
                     self.security = "open"
                     G_reader_settings:saveSetting("hotspot_security", "open")
@@ -552,7 +773,7 @@ function Hotspot:addToMainMenu(menu_items)
             },
             {
                 text = _("WPA2 password protection"),
-                checked_func = function() return self.security == "wpa2" end,
+                checked_func = function() return self.security == "wpa2" or requiresWpa2() end,
                 enabled_func = function() return not self:isRunning() end,
                 callback = function()
                     self.security = "wpa2"
@@ -566,7 +787,7 @@ function Hotspot:addToMainMenu(menu_items)
                 end,
                 keep_menu_open = true,
                 enabled_func = function()
-                    return self.security == "wpa2" and not self:isRunning()
+                    return (self.security == "wpa2" or requiresWpa2()) and not self:isRunning()
                 end,
                 callback = function(touchmenu_instance)
                     self:showPasswordDialog(touchmenu_instance)
