@@ -1,6 +1,6 @@
 # Porting hotspot.koplugin to other e-readers (Kindle, PocketBook, …)
 
-> Research report, 2026-10-31. Sources: web research (three parallel research agents) plus my own checks of key primary sources and of the plugin code and binaries. Nothing here has been tested on a device yet. Each target has an "on-device checks" list.
+> Research report, 2026-10-31. Machine-checkable claims, the source registry and on-device checks live in [`research/`](research/README.md). Sources: web research (three parallel research agents) plus my own checks of key primary sources and of the plugin code and binaries. Nothing here has been tested on a device yet. Each target has an "on-device checks" list.
 
 ## Executive summary
 
