@@ -4,13 +4,15 @@
 
 ## Executive summary
 
+**Scope assumption:** the hotspot is meant to pair the reader with the companion `filesync` tool. Typically **1–2 clients** connect at a time. Client-count limits (e.g. `ath6kl`'s 10, Broadcom's ~7–10 in practice) are not a concern. Any issues seen with more clients get documented in `README.md` rather than engineered around.
+
 | Target | Verdict | One-line reason |
 |---|---|---|
 | **Kindle PW5/SE, Basic 2022/2024, PW6, Scribe 1/2, Colorsoft (MediaTek)** | **Likely, best next target** | Same `wmt_drv` / `wmt_chrdev_wifi` / `wlan_drv_gen4m` stack as the Kobo Libra Colour (verified), kernel 4.9, KOReader runs as root. Needs: stop `wifid`, open the iptables firewall, block the screensaver |
 | **PocketBook B288 devices (Touch Lux 4/5, InkPad 3, Touch HD 3, Color, InkPad X, …)** | **Likely if rooted** | mac80211 XRadio driver + cfg80211 in kernel 3.10.65 (verified), AP and probably STA+AP concurrency. Blocker: root (KOReader is unprivileged, but already uses `/mnt/secure/su` when present) |
 | reMarkable 1 / 2 | Likely (not an e-reader per se, but a KOReader target) | brcmfmac (AP via nl80211), root by default, KOReader already takes Wi-Fi over from xochitl |
-| Kindle PW4, Basic 8th/10th, Oasis 2/3 (Broadcom BCM4343) | Possible with work | Driver and AP firmware unverified |
-| Kindle PW2/PW3/Voyage/Basic 7th, Oasis 1 | Possible with significant work | Vendor wext `ar6003` driver / kernel 3.0.35 → rebuilt hostapd or rebuilt `ath6kl` modules |
+| Kindle Basic 8th gen, PW4, Basic 10th, Oasis 2/3 (Broadcom BCM4343W) | Likely (Basic 8th) / probably likely (others) | Basic 8th verified on bcmdhd cfg80211 build. Same-module AP recipe: `op_mode=2` + stock hostapd nl80211. Stock firmware probably includes SoftAP (§6.2) |
+| Kindle PW2/PW3/Voyage/Basic 7th (Atheros AR6003) | Possible with work, path known | Stock wext `ar6003` can't do it, but upstream `ath6kl` can (b/g, ≤ 10 clients). Amazon's own GPL tree ships QCA's ath6kl compat-wireless. Rebuild those modules + musl hostapd (§6.1) |
 | PocketBook B300 (newest) | Unknown | Wi-Fi driver unverified, root much harder |
 | Cervantes, Bookeen | Possible with work | Realtek vendor drivers → `rtl871xdrv` hostapd, old kernels |
 | Older Kindles (K4/Touch/PW1), PocketBook A13 / i.MX6, Sony PRS-T | Unlikely | Very old kernels, vendor wext drivers |
@@ -416,13 +418,171 @@ Also bundle a static **`iw`** (libnl): on every new platform it's the fastest wa
   - Does stopping `wifid` cleanly hand over the radio?
   - Does Bluetooth (also on WMT) survive the mode switch?
   - Is STA+AP possible (`CONFIG_MTK_WIFI_MCC_SUPPORT=y`)?
-- **Kindle Broadcom**: bcmdhd or brcmfmac? Is AP firmware present?
+- **Kindle Broadcom**: Basic 8th gen is bcmdhd (verified). For PW4/Basic 10th/Oasis 2/3: same driver? Does the stock `fw_bcmdhd*.bin` beacon with `op_mode=2`?
+- **Kindle Atheros**: are Amazon's ath6kl modules already in `/lib/modules`? Does the shipped kernel have cfg80211 as a module?
 - **PocketBook B288**:
   - Does `iw dev wlan0 interface add ap0 type __ap` work while the firmware's client is connected?
   - Does netagent power the radio down on `NetDisconnect` or after idle?
   - What are the stock iptables rules?
 - **PocketBook B300**: which Wi-Fi chip and driver (check `lsmod`)?
 - **reMarkable**: does xochitl restart `wpa_supplicant` on resume? Which chip is in the Paper Pro?
+
+## 6. Atheros and Broadcom Kindles: prior art outside e-readers
+
+> Added after the first report, from a dedicated research agent plus my own checks of the key primary sources (marked "verified").
+> The question: is AP mode on these chips already solved on OpenWrt, Raspberry Pi, Android or embedded boards?
+> Short answer: **yes for both chips, using the mainline-style cfg80211 drivers (`ath6kl`, `brcmfmac`/cfg80211 `bcmdhd`) with plain hostapd nl80211**. The Kindle stock drivers are the obstacle, not the chips.
+
+### 6.1 Atheros AR6003 (PW2, Basic 7th gen, Voyage, PW3; older K4/Touch/PW1)
+
+**Already solved elsewhere?** Mostly yes, with the upstream/QCA `ath6kl` driver and hostapd nl80211. The vendor `ar6003`/`ar6000` driver path is **not**: it needs an unpublished vendor hostapd backend.
+
+- **The Kindle chip is the revision ath6kl supports** [H]:
+  - The Kindle Touch vendor driver loads firmware from `/opt/ar6k/target/AR6003/hw2.1.1/`.
+    ([MobileRead](https://www.mobileread.com/forums/showthread.php?p=4221618))
+  - A PW3 running mainline Linux uses upstream **ath6kl** with `/lib/firmware/ath6k/AR6003/hw2.1.1/` [H, verified]. The author describes the AR6803G as "an AR6003 in a QFN package".
+    ([MobileRead](https://www.mobileread.com/forums/showthread.php?p=4103442))
+  - That post is the best evidence ath6kl drives Kindle hardware, but it is only partial. The device associated and got an IP before the board-data fix, but "didn't seem to work well". The fix (link `bdata.SD32.bin` → `bdata.bin`; it matches the stock board data) was expected to work but wasn't reported as tested. Station mode only, no AP test.
+- **Upstream ath6kl AP mode** [H]:
+  - ath6kl left staging in **Linux 3.2**.
+  - AP mode came from the "ath6kl: AP mode and P2P" series (2011). The kernel docs list "AP mode (requires hostapd 1.0 or newer)", WPA/WPA2, no monitor mode.
+    ([kernel docs](https://wireless.docs.kernel.org/en/latest/en/users/drivers/ath6kl.html))
+  - The AP is **b/g only** in practice: with 802.11n enabled, hostapd fails with `nl80211: Failed to set channel … -22`. Use `hw_mode=g`, `ieee80211n=0` [M].
+    ([hostap list](https://lists.infradead.org/pipermail/hostap/2013-November/028998.html))
+  - **Client limit**: `#define AP_MAX_NUM_STA 10` in `ath6kl/wmi.h` [H, verified]. Changing it needs both driver and firmware recompiled.
+- **Firmware** [H]: linux-firmware ships `ath6k/AR6003/hw2.1.1/` (`fw-3.bin`, `athwlan.bin`, `otp.bin`, `data.patch.bin`, `bdata.SD31/SD32/WB31.bin`) under a **redistributable** licence (LICENCE.atheros_firmware). So it can be bundled. Use the device's own board data (`bdata.SD32.bin`).
+- **Amazon's own GPL kernel tree already contains Qualcomm's ath6kl compat package** [H, verified]:
+  - `compat-wireless/compat_version` = `3.3-OSR-2012-10-11-15-g2bd3ebf`.
+  - The tree contains `compat-wireless/drivers/net/wireless/ath/ath6kl/` with `cfg80211.c`, `wmiconfig.c` (wmiconfig over nl80211 testmode), `softmac.c`, `recovery.c`, and `.orig` files showing Amazon patched it.
+    ([katadelos/linux-3.0.35-lab126](https://github.com/katadelos/linux-3.0.35-lab126/tree/master/compat-wireless/drivers/net/wireless/ath/ath6kl))
+  - This is the most direct thing to reuse, because it already matches the kernel and toolchain.
+- **It is part of Amazon's normal kernel build, not an add-on** [H, verified]. `imx60_wario_defconfig` (PW2-era) has:
+  ```
+  CONFIG_CFG80211=m  CONFIG_NL80211_TESTMODE=y  CONFIG_COMPAT_WIRELESS=y  CONFIG_COMPAT_WIRELESS_MODULES=m
+  CONFIG_ATH_COMMON=m  CONFIG_ATH6KL=m  CONFIG_ATH6KL_SDIO=m  CONFIG_AR6003=m  # CONFIG_AR6003_CFG80211 is not set
+  ```
+  ([wario defconfig](https://raw.githubusercontent.com/katadelos/linux-3.0.35-lab126/master/arch/arm/configs/imx60_wario_defconfig))
+  cfg80211 is a **module**, so loading a different wireless stack is possible. The ath6kl modules may even already be on the device (check `/lib/modules`).
+- **Amazon's ath6kl is ready for hostapd** [H, verified]:
+  - `init.c` sets `WIPHY_FLAG_HAVE_AP_SME | WIPHY_FLAG_AP_PROBE_RESP_OFFLOAD`. hostapd then manages the AP in "device AP SME" mode and needs **no monitor interface**, which matters because ath6kl has no monitor mode.
+  - Under `#ifdef CONFIG_LAB126` it adds `module_param_string(board_data_file, …)`, so the Kindle's calibration file can be passed at load time.
+  - ([init.c](https://raw.githubusercontent.com/katadelos/linux-3.0.35-lab126/master/compat-wireless/drivers/net/wireless/ath/ath6kl/init.c))
+  - The subagent also reports that `cfg80211.c` implements the 3.0-era AP callbacks (`add_beacon`/`set_beacon`/`del_beacon`) with WPA-PSK [M].
+- **Backports for kernel 3.0** [H]: **backports v4.4.2 is the last release supporting 3.0 kernels**, and it includes ath6kl with AP mode.
+  ([kernel.org backports](https://cdn.kernel.org/pub/linux/kernel/projects/backports/stable/))
+- **Useful later fixes to cherry-pick** [M]: 2016 Aldebaran tethering fixes in ath6kl, merged around 4.8/4.9.
+  - WPA 4-way handshake stalls at msg 1/4 ([270df8f80d67](https://github.com/torvalds/linux/commit/270df8f80d67)).
+  - Carrier not cleared on AP stop, which blocks re-enabling.
+  - These were reported on AR9374; whether they affect AR6003 is unverified.
+- **Other devices that ran an AP with ath6kl**:
+  - Digi ConnectCore 6 (i.MX6, AR6233) does softAP for up to 5 clients plus AP-STA concurrency [H]. Different chip, same driver, same SoC family.
+    ([Digi docs](https://docs.digi.com/resources/documentation/digidocs/embedded/dey/2.6/cc6/bsp_r_wifi-overview_ar6233))
+  - An NXP community thread reports the proprietary AR6103 driver worked as a client but not as an AP with hostapd, so the user moved to ath6kl [M].
+- **Vendor driver path, for completeness**: AR6kSDK's `wmiconfig` has softAP commands (`--ssid`, `--numsta`, `--commit`, `--wmode gonly`) but **no AP security option**. WPA2 was expected to come from a vendor-patched hostapd ("ar6000" backend) whose source wasn't found [H for wmiconfig, M for the rest]. → Not recommended.
+  ([wmiconfig.c](https://raw.githubusercontent.com/psyke83/AR6kSDK.3.0/master/AR6kSDK.3.0/host/tools/wmiconfig/wmiconfig.c))
+
+**Recommended path for Atheros Kindles:**
+1. First check whether the stock rootfs already ships the ath6kl modules (`find /lib/modules/$(uname -r) -name '*ath6kl*'`). If not, build the 3.0.35-lab126 tree with `imx60_wario_defconfig` (vermagic must match) and collect `compat.ko`, `cfg80211.ko`, `ath6kl_core.ko`/`ath6kl_sdio.ko`. Fallback: backports-4.4.2.
+2. Bundle the linux-firmware hw2.1.1 files. Pass the Kindle's own calibration file via `board_data_file=` (or use `bdata.SD32.bin`).
+3. At runtime:
+   1. `stop wifid`
+   2. `rmmod ar6003`
+   3. `insmod` the ath6kl modules
+   4. run hostapd (nl80211, `hw_mode=g`, `ieee80211n=0`), then IP, udhcpd and firewall rules
+   5. reverse everything on stop
+4. Rebuild hostapd/udhcpd with **musl**: kernel 3.0.35 is below the current binary's 3.2 floor.
+
+**Risks**:
+- The GPL defconfig says `CFG80211=m`, but a PW2 stock `/proc/config.gz` dump said it isn't set. So the shipped kernel may differ from the published defconfig. If the shipped kernel lacks cfg80211 entirely, the compat-wireless `cfg80211.ko` provides it. If it were built in (`=y`), it couldn't be swapped. Check on the device.
+- SDIO power/reset quirks when swapping drivers.
+- The firmware hotplug path (`/usr/libexec/firmware.sh` on Kindle).
+
+### 6.2 Broadcom BCM4343 (PW4, Basic 8th/10th, Oasis 1/2/3)
+
+**Already solved elsewhere?** Yes, for both drivers. **brcmfmac**: Raspberry Pi 3 / Zero W hotspots are the standard example. **bcmdhd**: Android softAP, NXP/Murata i.MX BSPs.
+
+- **brcmfmac** [H/M]:
+  - BCM43430 support landed in **Linux 4.1** [M-H], so kernels 3.0 and 3.10 can't use in-kernel brcmfmac for this chip.
+  - linux-firmware ships `brcmfmac43430-sdio.bin` (Cypress, **redistributable**) plus NVRAM for Murata 1DX (`brcmfmac43430-sdio.MUR1DX.txt`). The standard firmware does AP, used on the Pi with plain hostapd nl80211.
+  - **AP+STA**: `iw dev wlan0 interface add uap0 type __ap` works, but on the same channel only.
+    ([RaspAP AP-STA](https://docs.raspap.com/features-experimental/ap-sta/))
+  - **Client limit** [M]: about 7–10 in practice. In one report (43455 firmware) it crashed when the 8th client joined.
+    ([raspberrypi/firmware#1403](https://github.com/raspberrypi/firmware/issues/1403), [RaspAP#462](https://github.com/RaspAP/raspap-webgui/issues/462))
+- **bcmdhd** [H]:
+  - Android softAP runs hostapd **nl80211** on the cfg80211 build of bcmdhd, and switches to AP firmware by writing `/sys/module/bcmdhd/parameters/firmware_path` (e.g. CyanogenMod's `fw_bcmdhd_apsta.bin`).
+    ([CM bcmdhd.mk](https://www.github.com/CyanogenMod/android_device_htc_msm8660-common/blob/cm-10.1/bcmdhd.mk))
+  - AOSP ships `fw_bcm4343.bin`, `fw_bcm4343_apsta.bin`, `fw_bcm4343_a1.bin`, `fw_bcm4343_a1_apsta.bin`. Their licence is unchecked.
+    ([AOSP](https://android.googlesource.com/platform/hardware/broadcom/wlan/+/android-6.0.0_r3/bcmdhd/firmware/bcm4343))
+- **Closest match to Kindle hardware: NXP's 4.1.15 BSP** (i.MX6SLL/i.MX7D, same kernel as PW4/Oasis 2/3):
+  - It enables `CONFIG_BCMDHD=y` [H].
+  - The Murata 1DX (BCM4343W) AP recipe there is: `echo 2 > /sys/module/bcmdhd/parameters/op_mode`, then hostapd + udhcpd.
+  - An unresolved NXP thread got `AP-ENABLED` but **no visible beacon**, probably because `fw_bcmdhd_apsta.bin` was missing [M].
+    ([NXP community](https://community.nxp.com/thread/462224))
+  - This is the main risk to test on Kindle.
+- **Which driver Kindles use**:
+  - **Kindle 8th gen (Heisenberg board, kernel 3.10.53): verified `bcmdhd`, cfg80211 build** [H, verified]. From a serial boot log:
+    ```
+    dhd_module_init in
+    found wifi platform device bcmdhd_wlan
+    CFG80211-ERROR) wl_event_handler : …
+    dhdsdio_download_code_file: download firmware '/opt/brcm_4343w/wifi/firmware/fw_bcmdhd_sr.bin' …
+    Dongle Host Driver, version 1.201.59 (r506368)
+    Register interface [wlan0]
+    ```
+    ([MobileRead boot log](https://www.mobileread.com/forums/showthread.php?p=3726053))
+    The `wl_cfg80211` code path means hostapd **nl80211 is usable**. The chip is a **BCM4343W** (Murata 1DX family). `dhd_module_init` at ~30 s suggests userspace loads the driver as a module.
+  - **PW4, Basic 10th, Oasis 2/3 (4.1.15)**: not confirmed, no public logs. Probably the same `bcmdhd`, given NXP's 4.1.15 BSP and Amazon's 2016 integration [M].
+  - **Oasis 1 (3.0.35)**: inconclusive. The `duet` defconfig has `CFG80211=y` and no in-tree Broadcom driver, so probably an out-of-tree bcmdhd [L].
+- **Proven AP recipe on the same module with bcmdhd** [H documented / M transferable]: the SomLabs VisionSOM wiki (i.MX6ULL + Murata 1DX) runs **stock upstream hostapd** (no `driver=` line, i.e. nl80211, WPA2) after `echo 2 > /sys/module/bcmdhd/parameters/op_mode`, plus `ip addr add` and `udhcpd`. **That is exactly the plugin's stack.**
+  ([SomLabs wiki](https://wiki.somlabs.com/index.php/How_to_use_Murata_WiFi_on_VisionSOM-6ULL))
+- **AP firmware is probably already on the device** [M]:
+  - Per NXP's imx-firmware history, `fw_bcmdhd_apsta.bin` was dropped once bcmdhd reached v1.141.100.6. From then on a single `fw_bcmdhd.bin` "supports STA/Client, Soft AP, Simultaneous STA/Soft AP". That also explains the unresolved NXP "AP not visible" thread above.
+  - The Kindle's bcmdhd is **1.201.59** (newer), so its `fw_bcmdhd_sr.bin` (`_sr` = save/restore) is likely a combined image. Confirm with `strings … | tail` and an `op_mode=2` test.
+  - **Fallbacks**, keeping the device's own NVRAM in every case:
+    - NXP firmware-imx `bcm/1DX_BCM4343W/fw_bcmdhd.bin` (NXP licence, redistribution unchecked).
+    - AOSP `fw_bcm4343[_a1]_apsta.bin`. Its licence allows unmodified redistribution "only for use with a Broadcom Product" [H].
+      ([LICENSE.TXT](https://android.googlesource.com/platform/hardware/broadcom/wlan/+/android-6.0.0_r3/bcmdhd/firmware/LICENSE.TXT))
+
+**Recommended path for Broadcom Kindles:**
+1. Identify the driver and how Amazon loads it:
+   - `ls /sys/module | grep -iE 'dhd|brcm'` and `cat /sys/module/*dhd*/parameters/{firmware_path,nvram_path,op_mode}`.
+   - Find the `insmod` line in `/etc/upstart`.
+   - `ls /sys/class/ieee80211/` (present = cfg80211 build).
+2. **bcmdhd with cfg80211** (verified on Basic 8th gen):
+   1. `stop wifid`, then `rmmod` the driver.
+   2. Re-`insmod` it with **`op_mode=2`** plus Amazon's own `firmware_path`/`nvram_path`. `op_mode` takes effect when the firmware downloads, which on Kindle happens at module load.
+   3. Run hostapd nl80211 on `wlan0` (`hostapd -dd` should show `device_ap_sme=1` and `AP-ENABLED`), then verify a phone sees and joins it.
+   4. If it doesn't beacon, try a fallback firmware above that matches the chip revision. bcmdhd is picky about driver/firmware version matching.
+3. **bcmdhd WEXT-only**: no nl80211. Rebuild bcmdhd with cfg80211 from Amazon's source, or build brcmfmac from backports (kernels 3.10/4.1 → backports up to ~5.10; kernel 3.0 → backports 4.4.2).
+4. **brcmfmac**: use the Raspberry Pi recipe as-is.
+
+### 6.3 Effect on the earlier verdicts
+
+| Family | Before | After |
+|---|---|---|
+| Atheros Kindles (PW2/PW3/Voyage/Basic 7th) | Possible with significant work | **Possible with work, path known**: Amazon's own kernel build already produces `ath6kl`/`cfg80211` modules, with AP SME support and a `board_data_file` param. Add linux-firmware + musl hostapd. Proven on other i.MX6 devices |
+| **Basic 8th gen** | Possible with work | **Likely**: verified bcmdhd 1.201.59 cfg80211 build. Same-module recipe is `op_mode=2` + stock hostapd nl80211 + udhcpd. The current binary runs on kernel 3.10 |
+| Broadcom Kindles (PW4/Basic 10th/Oasis 2/3) | Possible with work | **Likely-ish**: probably the same bcmdhd. The remaining risk is whether the stock firmware includes SoftAP (probably yes, since it's newer than 1.141.100.6) |
+| Oasis 1 | Possible with more work | Unchanged: driver unconfirmed, needs musl hostapd |
+
+### 6.4 Extra on-device checks (Atheros/Broadcom Kindles)
+
+```sh
+uname -r; lsmod; ls /sys/module | grep -iE 'ar6|ath6|dhd|brcm|cfg80211|compat'
+ls /sys/class/ieee80211/ 2>/dev/null          # present => cfg80211/nl80211 driver
+zcat /proc/config.gz 2>/dev/null | grep -E 'CFG80211|NL80211|WIRELESS_EXT|BCMDHD|BRCMFMAC|ATH6KL'
+dmesg | grep -iE 'ar6000|ath6kl|dhd|brcm|firmware'
+for p in /sys/module/*dhd*/parameters/*; do echo "$p: $(cat $p)"; done   # firmware_path, nvram_path, op_mode
+find / -xdev \( -name 'fw_*.bin' -o -name '*apsta*' -o -name 'brcmfmac*' -o -name '*.cal' -o -name 'bdata*' \) 2>/dev/null
+ls -R /opt/ar6k/target/ 2>/dev/null; which wmiconfig
+strings <wifi-firmware.bin> | tail -1          # Broadcom: version + feature list (look for "ap"/"apsta")
+# Atheros: are Amazon's ath6kl/cfg80211 modules already shipped?
+find /lib/modules/$(uname -r) -name '*ath6kl*' -o -name 'cfg80211.ko' -o -name 'compat*.ko' -o -name 'ar6003.ko'
+modinfo <each>.ko | grep -E 'vermagic|parm'    # look for board_data_file
+grep -rn 'ar6003\|ath6kl\|dhd\|brcm\|insmod\|modprobe' /etc/upstart /etc/init.d 2>/dev/null   # how Amazon loads the driver
+# Broadcom AP test: stop wifid; rmmod <dhd>; insmod <dhd>.ko op_mode=2 <Amazon's firmware_path/nvram_path>;
+# hostapd -dd <conf>  → look for device_ap_sme=1 and AP-ENABLED, then join from a phone
+```
 
 ---
 
